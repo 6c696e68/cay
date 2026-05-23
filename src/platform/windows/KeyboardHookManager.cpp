@@ -65,7 +65,9 @@ LRESULT CALLBACK InputHookManager::KbProc(int nCode, WPARAM wParam, LPARAM lPara
     if (vk >= 'A' && vk <= 'Z') {
         // Simple ASCII mapping: shift to lowercase unless Shift is held.
         bool shifted = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-        ch = shifted ? (wchar_t)vk : (wchar_t)(vk + 32);
+        bool capsLk = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+        bool upper = shifted ^ capsLk;
+        ch = upper ? (wchar_t)vk : (wchar_t)(vk + 32);
     } else if (vk >= '0' && vk <= '9') {
         ch = (wchar_t)vk;
     }
@@ -117,3 +119,4 @@ LRESULT CALLBACK InputHookManager::MouseProc(int nCode, WPARAM wParam, LPARAM lP
 }
 
 } // namespace CayIME
+

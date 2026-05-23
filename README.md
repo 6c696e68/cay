@@ -15,7 +15,8 @@ Bộ gõ Telex siêu nhẹ, "plug-and-play" dành cho anh em developer hệ tố
 
 - **Siêu nhẹ & Sạch sẽ:** File thực thi chỉ vỏn vẹn ~22KB. Chạy độc lập, không phụ thuộc thư viện rườm rà, ngốn RAM gần như bằng 0.
 - **Không lỗi vặt:** Đã fix triệt để các bệnh nan y như lỗi nuốt chữ, nhảy nháy khi gõ trên thanh địa chỉ Chrome, thanh tìm kiếm VSCode hay GitHub/CodeMirror.
-- **Smart Bypass (Gõ code cực bốc):** Tự động nhận diện từ tiếng Anh hoặc các chuỗi sai quy tắc chính tả tiếng Việt để nhường lại quyền gõ phím nguyên thủy. Anh em cứ gõ code tiếng Anh vô tư mà không sợ bị bắt dấu sai lệch.
+- **Smart Bypass (Gõ code cực bốc):** Tự động nhận diện từ tiếng Anh hoặc các chuỗi sai quy tắc chính tả tiếng Việt để nhường lại quyền gõ phím nguyên thủy. Được nâng cấp với thuật toán **Hard Filter (Luật phụ âm kép)**, ngắt ngay các từ tiếng Anh như `style`, `class` từ ký tự thứ 2, giúp gõ code cực mượt và tiết kiệm tối đa CPU cycle.
+- **Kiến trúc đa nền tảng (Cross-platform ready):** Lõi xử lý Telex được tách biệt hoàn toàn khỏi Windows API, không dùng STL, không cấp phát động. Sẵn sàng port sang macOS/Linux mà vẫn giữ nguyên bản sắc siêu nhẹ gọn.
 - **Tinh gọn tối đa (Zero Bloat):** Mạnh tay cắt bỏ toàn bộ những tính năng "thừa thãi" mà 99% người dùng không bao giờ đụng tới ở các bộ gõ khác (bảng mã TCVN3/VNI cũ rích, kiểu gõ VIQR, macro gõ tắt, giao diện rườm rà, tool chuyển mã ). Chỉ tập trung duy nhất vào **Unicode** và **Telex** để đạt hiệu năng tối thượng.
 - **Zero-config:** Không cần chỉnh bảng mã, không cần chọn kiểu gõ. Tải về là chạy, bật là gõ.
 ## 🛠️ Build từ Source

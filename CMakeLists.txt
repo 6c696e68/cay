@@ -8,17 +8,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Sources
 # ---------------------------------------------------------------------------
 set(SOURCES
-    src/main.cpp
-    src/CayData.cpp
-    src/CayEngine.cpp
-    src/InputInjector.cpp
-    src/KeyboardHookManager.cpp
-    src/no_crt.cpp
+    src/platform/windows/main.cpp
+    src/core/CayData.cpp
+    src/core/CayEngine.cpp
+    src/platform/windows/InputInjector.cpp
+    src/platform/windows/KeyboardHookManager.cpp
+    src/platform/windows/no_crt.cpp
 )
 
 add_executable(cay WIN32 ${SOURCES})
 
-target_include_directories(cay PRIVATE src)
+target_include_directories(cay PRIVATE src/core src/platform/windows)
 
 # ---------------------------------------------------------------------------
 # Compiler + linker flags (MSVC) – small static exe, no dynamic CRT DLL
@@ -69,3 +69,4 @@ if(MSVC)
         libucrt.lib       # Universal CRT – wide-char, math etc.
     )
 endif()
+

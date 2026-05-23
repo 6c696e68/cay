@@ -170,6 +170,27 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return 0;
 }
 
+Cay::KeyCode MapVKToKeyCode(DWORD vk) {
+    if (vk >= 'A' && vk <= 'Z') return (Cay::KeyCode)vk;
+    switch (vk) {
+        case VK_BACK: return Cay::KeyCode::Backspace;
+        case VK_ESCAPE: return Cay::KeyCode::Escape;
+        case VK_RETURN: return Cay::KeyCode::Enter;
+        case VK_TAB: return Cay::KeyCode::Tab;
+        case VK_SPACE: return Cay::KeyCode::Space;
+        case VK_LEFT: return Cay::KeyCode::Left;
+        case VK_RIGHT: return Cay::KeyCode::Right;
+        case VK_UP: return Cay::KeyCode::Up;
+        case VK_DOWN: return Cay::KeyCode::Down;
+        case VK_HOME: return Cay::KeyCode::Home;
+        case VK_END: return Cay::KeyCode::End;
+        case VK_PRIOR: return Cay::KeyCode::PageUp;
+        case VK_NEXT: return Cay::KeyCode::PageDown;
+        case VK_DELETE: return Cay::KeyCode::Delete;
+        default: return Cay::KeyCode::Unknown;
+    }
+}
+
 void OnKeyDownHook(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e) {
     if (e.extraInfo == CayIME::InputInjector::MAGIC_EXTRA_INFO) return;
 
@@ -190,7 +211,12 @@ void OnKeyDownHook(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e
     if (g_ctrl || g_win || g_alt) return;
     if (!g_enabled) return;
 
-    g_engine.OnKeyDown(nullptr, e);
+        Cay::KeyEvent ce;
+    ce.keyCode = MapVKToKeyCode(e.keyCode);
+    ce.character = e.character;
+    ce.handled = false;
+    g_engine.OnKeyDown(ce);
+    if (ce.handled) e.handled = true;
 }
 
 void OnKeyUpHook(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e) {
@@ -209,7 +235,12 @@ void OnKeyUpHook(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e) 
     }
 
     if (!g_enabled) return;
-    g_engine.OnKeyUp(nullptr, e);
+        Cay::KeyEvent ce;
+    ce.keyCode = MapVKToKeyCode(e.keyCode);
+    ce.character = e.character;
+    ce.handled = false;
+    g_engine.OnKeyUp(ce);
+    if (ce.handled) e.handled = true;
 }
 
 void OnMouseClickHook(CayIME::InputHookManager* sender) {
@@ -261,6 +292,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
     g_hookManager = new CayIME::InputHookManager();
     g_hookManager->KeyDown = OnKeyDownHook;
     g_hookManager->KeyUp = OnKeyUpHook;
+    g_engine.OnInjectText = CayIME::InputInjector::ReplaceText;
     g_hookManager->MouseClick = OnMouseClickHook;
 
     // Message Loop
@@ -281,3 +313,4 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
 
     return (int)msg.wParam;
 }
+

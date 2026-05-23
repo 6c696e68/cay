@@ -85,8 +85,8 @@ static const wchar_t s_toneY[6] = { L'y', L'\u1EF3', L'\u00FD', L'\u1EF7', L'\u1
 bool CayData::IsValidInitial(const wchar_t* s, int len) {
     if (!s || len <= 0) return false;
     for (int i = 0; i < s_initialsCount; i++) {
-        if ((int)lstrlenW(s_initials[i]) == len &&
-            lstrcmpW(s_initials[i], s) == 0) {
+        if ((int)CayStrLen(s_initials[i]) == len &&
+            CayStrCmp(s_initials[i], s) == 0) {
             return true;
         }
     }
@@ -99,8 +99,8 @@ bool CayData::IsValidInitial(const wchar_t* s, int len) {
 bool CayData::IsValidNucleus(const wchar_t* s, int len) {
     if (!s || len <= 0) return false;
     for (int i = 0; i < s_nucleiCount; i++) {
-        int nlen = (int)lstrlenW(s_nuclei[i]);
-        if (nlen == len && lstrcmpW(s_nuclei[i], s) == 0) {
+        int nlen = (int)CayStrLen(s_nuclei[i]);
+        if (nlen == len && CayStrCmp(s_nuclei[i], s) == 0) {
             return true;
         }
     }
@@ -331,3 +331,4 @@ bool CayData::IsVowel(wchar_t ch) {
 }
 
 } // namespace Cay
+

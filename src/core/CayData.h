@@ -1,7 +1,6 @@
 #pragma once
-#include <windows.h>
 
-// Maximum width of a single Vietnamese syllable in the output buffer.
+#include "CayTypes.h"
 #define MAX_BUFFER 64
 
 namespace Cay {

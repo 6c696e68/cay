@@ -1,8 +1,6 @@
 #pragma once
-#include <windows.h>
 #include "CayData.h"
-#include "InputInjector.h"
-#include "KeyboardHookManager.h"
+#include "CayTypes.h"
 
 namespace Cay {
 
@@ -33,16 +31,18 @@ public:
     TelexEngine();
 
     // Called on every keydown (main.cpp delegates here).
-    void OnKeyDown(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e);
+    void OnKeyDown(Cay::KeyEvent& e);
 
     // Called on every keyup (currently a no-op, reserved for future use).
-    void OnKeyUp(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e);
+    void OnKeyUp(Cay::KeyEvent& e);
 
     // Hard reset: flush buffer and discard all state.
     void ResetFull();
 
     // Commit current word: save state for recall, then reset.
     void CommitWord();
+
+    InjectTextFunc OnInjectText = nullptr;
 
 private:
     MyKey _buffer[MAX_BUFFER];

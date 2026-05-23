@@ -133,7 +133,7 @@ void TelexEngine::UpdateScreen(const wchar_t* newOutput, int newOutputLen) {
 
     // 4. Inject exact keystrokes
     if (backspacesNeeded > 0 || textToTypeLen > 0) {
-        CayIME::InputInjector::ReplaceText(backspacesNeeded, textToType, textToTypeLen);
+        if (OnInjectText) OnInjectText(backspacesNeeded, textToType, textToTypeLen);
     }
 
     // 5. Update state
@@ -164,7 +164,7 @@ void TelexEngine::FallbackToRaw() {
     }
     raw[rawLen] = L'\0';
 
-    CayIME::InputInjector::ReplaceText(_textLen, raw, rawLen);
+    if (OnInjectText) OnInjectText(_textLen, raw, rawLen);
 
     // Update _text to reflect the fallback.
     for (int i = 0; i < rawLen; i++) _text[i] = raw[i];
@@ -242,7 +242,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
     // ── BLOCK 1: Khớp phụ âm đầu ──────────────────────────────
     const wchar_t* matchedInitial = nullptr;
     for (int i = 0; i < (int)(sizeof(s_initials)/sizeof(s_initials[0])); i++) {
-        int ilen = lstrlenW(s_initials[i]);
+        int ilen = CayStrLen(s_initials[i]);
         if (ilen == 0) { matchedInitial = L""; break; }
         if (matchStr(s_initials[i], ilen)) {
             pos += ilen;
@@ -263,7 +263,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
     // ── BLOCK 2: Khớp nhân nguyên âm (bắt buộc) ───────────────
     const wchar_t* matchedNucleus = nullptr;
     for (int i = 0; i < (int)(sizeof(s_nuclei)/sizeof(s_nuclei[0])); i++) {
-        int nlen = lstrlenW(s_nuclei[i]);
+        int nlen = CayStrLen(s_nuclei[i]);
         if (matchStr(s_nuclei[i], nlen)) {
             pos += nlen;
             matchedNucleus = s_nuclei[i];
@@ -274,7 +274,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
 
     // ── BLOCK 3: Khớp phụ âm cuối (tùy chọn) ─────────────────
     for (int i = 0; i < (int)(sizeof(s_finals)/sizeof(s_finals[0])); i++) {
-        int flen = lstrlenW(s_finals[i]);
+        int flen = CayStrLen(s_finals[i]);
         if (flen == 0) break;
         if (matchStr(s_finals[i], flen)) {
             pos += flen;
@@ -284,7 +284,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
 
     // ── BLOCK 4: Khớp tail (tùy chọn) ────────────────────────
     for (int i = 0; i < (int)(sizeof(s_tails)/sizeof(s_tails[0])); i++) {
-        int tlen = lstrlenW(s_tails[i]);
+        int tlen = CayStrLen(s_tails[i]);
         if (tlen == 0) break;
         if (matchStr(s_tails[i], tlen)) {
             pos += tlen;
@@ -317,7 +317,31 @@ bool TelexEngine::ShouldBypassWord() const {
     if (raw[0] == L'w' || raw[0] == L'f' || raw[0] == L'j' || raw[0] == L'z') return true;
 
     if (len >= 2) {
+        // Lu?t Q: B?t bu?c di v?i u
         if (raw[0] == L'q' && raw[1] != L'u') return true;
+        
+        // Lu?t P: B?t bu?c di v?i h (B? qua c�c t? mu?n nhu pin, pa-t� d? t?i uu g� public, padding)
+        if (raw[0] == L'p' && raw[1] != L'h') return true;
+
+        // Lu?t Ph? �m k�p: Ti?ng Vi?t ch? c� 8 c?p ph? �m k�p h?p l? ? d?u t?.
+        // Helper: Ki?m tra xem k� t? c� ph?i l� ph? �m ASCII kh�ng
+        auto isConsonant = [](wchar_t c) {
+            return (c >= L'a' && c <= L'z') && 
+                   (c != L'a' && c != L'e' && c != L'i' && c != L'o' && c != L'u' && c != L'y');
+        };
+
+        if (isConsonant(raw[0]) && isConsonant(raw[1])) {
+            bool validVietCluster = 
+                (raw[0] == L'c' && raw[1] == L'h') ||
+                (raw[0] == L'g' && raw[1] == L'h') ||
+                (raw[0] == L'k' && raw[1] == L'h') ||
+                (raw[0] == L'n' && (raw[1] == L'g' || raw[1] == L'h')) ||
+                (raw[0] == L'p' && raw[1] == L'h') ||
+                (raw[0] == L't' && (raw[1] == L'h' || raw[1] == L'r'));
+            
+            // N?u l� 2 ph? �m d?ng d?u nhung kh�ng n?m trong danh s�ch tr�n -> 100% English (vd: class, style, block)
+            if (!validVietCluster) return true;
+        }
         if (raw[0] == L'c' && (raw[1] == L'i' || raw[1] == L'e' || raw[1] == L'\u00EA' || raw[1] == L'y')) return true;
         if (raw[0] == L'k' && !(raw[1] == L'h' || raw[1] == L'i' || raw[1] == L'e' || raw[1] == L'\u00EA' || raw[1] == L'y')) return true;
         if (raw[0] == L'g' && (raw[1] == L'e' || raw[1] == L'\u00EA' || raw[1] == L'y')) return true;
@@ -668,23 +692,23 @@ bool TelexEngine::ApplyToneMarks(int toneIndex) {
 // ---------------------------------------------------------------------------
 // OnKeyDown – main entry point
 // ---------------------------------------------------------------------------
-void TelexEngine::OnKeyDown(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e) {
+void TelexEngine::OnKeyDown(Cay::KeyEvent& e) {
     // 0. Reset state on Navigation or Control keys to prevent buffer desync
-    if (e.keyCode == VK_RETURN || e.keyCode == VK_TAB || e.keyCode == VK_ESCAPE ||
-       (e.keyCode >= VK_PRIOR && e.keyCode <= VK_DOWN)) { 
-        // VK_PRIOR (33) to VK_DOWN (40) covers PageUp, PageDown, End, Home, Left, Up, Right, Down
+    if (e.keyCode == Cay::KeyCode::Enter || e.keyCode == Cay::KeyCode::Tab || e.keyCode == Cay::KeyCode::Escape ||
+       (e.keyCode >= Cay::KeyCode::PageUp && e.keyCode <= Cay::KeyCode::Down)) { 
+        // Cay::KeyCode::PageUp (33) to Cay::KeyCode::Down (40) covers PageUp, PageDown, End, Home, Left, Up, Right, Down
         ResetState();
         _canRestore = false;
         return;
     }
 
-    DWORD vk = e.keyCode;
+    Cay::KeyCode vk = e.keyCode;
 
     // -----------------------------------------------------------------------
     // 1. Non-alpha keys that reset or terminate the current word.
     // -----------------------------------------------------------------------
     switch (vk) {
-    case VK_BACK:
+    case Cay::KeyCode::Backspace:
         if (_bufferCount == 0 && _canRestore) {
             // Restore state
             _bufferCount = _savedBufferCount;
@@ -723,27 +747,27 @@ void TelexEngine::OnKeyDown(CayIME::InputHookManager* sender, CayIME::HookKeyEve
             if (_bufferCount == 0) {
                 ResetState();
                 // Send one backspace to clear the last remaining displayed char.
-                CayIME::InputInjector::ReplaceText(1, nullptr, 0);
+                if (OnInjectText) OnInjectText(1, nullptr, 0);
             } else {
                 UpdateScreen(_text, _textLen); // Automatically calculates and sends 1 Backspace
             }
         }
         return;
 
-    case VK_ESCAPE:
+    case Cay::KeyCode::Escape:
         ResetFull();
         return;
 
-    case VK_RETURN:
-    case VK_TAB:
-    case VK_SPACE:
+    case Cay::KeyCode::Enter:
+    case Cay::KeyCode::Tab:
+    case Cay::KeyCode::Space:
         if (_bufferCount > 0) CommitWord();
         else ResetFull();
         return;
 
-    case VK_LEFT: case VK_RIGHT: case VK_UP: case VK_DOWN:
-    case VK_HOME: case VK_END:  case VK_PRIOR: case VK_NEXT:
-    case VK_DELETE:
+    case Cay::KeyCode::Left: case Cay::KeyCode::Right: case Cay::KeyCode::Up: case Cay::KeyCode::Down:
+    case Cay::KeyCode::Home: case Cay::KeyCode::End:  case Cay::KeyCode::PageUp: case Cay::KeyCode::PageDown:
+    case Cay::KeyCode::Delete:
         ResetFull();
         return;
     }
@@ -751,7 +775,7 @@ void TelexEngine::OnKeyDown(CayIME::InputHookManager* sender, CayIME::HookKeyEve
     // -----------------------------------------------------------------------
     // 2. Only process printable ASCII alpha characters.
     // -----------------------------------------------------------------------
-    if (vk < 'A' || vk > 'Z') {
+    if (vk < Cay::KeyCode::KeyA || vk > Cay::KeyCode::KeyZ) {
         // Non-alpha printable (digits, punctuation) – commit word.
         if (_bufferCount > 0) CommitWord();
         else ResetFull();
@@ -759,11 +783,8 @@ void TelexEngine::OnKeyDown(CayIME::InputHookManager* sender, CayIME::HookKeyEve
     }
 
     // Determine the actual character pressed (respecting Shift).
-    bool shifted = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    bool capsLk  = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-    bool upper   = shifted ^ capsLk;
-    wchar_t ch   = upper ? (wchar_t)vk : (wchar_t)(vk + 32);
-    wchar_t lo   = ToLowerViet(ch);
+    wchar_t ch = e.character;
+    wchar_t lo = ToLowerViet(ch);
 
     // -----------------------------------------------------------------------
     // 3. Guard: buffer overflow -> fall through as plain text.
@@ -833,9 +854,12 @@ void TelexEngine::OnKeyDown(CayIME::InputHookManager* sender, CayIME::HookKeyEve
 // ---------------------------------------------------------------------------
 // OnKeyUp – currently unused; reserved for future modifier tracking.
 // ---------------------------------------------------------------------------
-void TelexEngine::OnKeyUp(CayIME::InputHookManager* sender, CayIME::HookKeyEventArgs& e) {
+void TelexEngine::OnKeyUp(Cay::KeyEvent& e) {
     // No-op for now.
-    (void)sender; (void)e;
+    (void)e;
 }
 
 } // namespace Cay
+
+
+
