@@ -1,13 +1,13 @@
 # 🌶️ Cay — Bộ gõ Telex Siêu Nhỏ Gọn
 
 [![Release](https://img.shields.io/github/v/release/tctvn/cay?style=flat-square&color=FF4500)](https://github.com/tctvn/cay/releases)
-[![Size](https://img.shields.io/badge/size-22_KB-brightgreen?style=flat-square)](https://github.com/tctvn/cay/releases/download/cay/cay.exe)
+[![Size](https://img.shields.io/badge/size-22_KB-brightgreen?style=flat-square)](https://github.com/tctvn/cay/releases/latest/download/cay.exe)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078d7?style=flat-square)](https://github.com/tctvn/cay/releases)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
 
 Bộ gõ Telex "nhỏ mà có võ", thiết kế đặc biệt cho anh em coder hệ tối giản. 
 
-➡️ [**Tải ngay cay.exe (22 KB)**](https://github.com/tctvn/cay/releases/download/cay/cay.exe)
+➡️ [**Tải ngay cay.exe (22 KB)**](https://github.com/tctvn/cay/releases/latest/download/cay.exe)
 
 ---
 
