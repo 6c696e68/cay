@@ -5,21 +5,21 @@
 namespace CayIME {
 
 // ---------------------------------------------------------------------------
-// HookKeyEventArgs – passed to key-event callbacks.
+// HookKeyEventArgs – được truyền đến callbacks key-event.
 // ---------------------------------------------------------------------------
 struct HookKeyEventArgs {
-    DWORD      keyCode;     // Virtual-key code (e.g. VK_A, VK_BACK …)
-    wchar_t    character;   // Translated Unicode character (0 if none)
-    ULONG_PTR  extraInfo;   // dwExtraInfo from the low-level hook
-    bool       handled;     // Set true by handler to suppress the keystroke
+    DWORD      keyCode;     // Virtual-key code (ví dụ VK_A, VK_BACK …)
+    wchar_t    character;   // Ký tự Unicode đã dịch (0 nếu không có)
+    ULONG_PTR  extraInfo;   // dwExtraInfo từ low-level hook
+    bool       handled;     // Set true bởi handler để suppress keystroke
 };
 
 // ---------------------------------------------------------------------------
 // InputHookManager
 //
-// Installs WH_KEYBOARD_LL and WH_MOUSE_LL hooks.
-// Callbacks are raw function pointers – no std::function, no heap allocation.
-// Key debouncing uses a 256-bit bitmask (4 × DWORD64) keyed by VK code.
+// Cài đặt hooks WH_KEYBOARD_LL và WH_MOUSE_LL.
+// Callbacks là raw function pointers – không std::function, không heap allocation.
+// Key debouncing dùng bitmask 256-bit (4 × DWORD64) được key bởi VK code.
 // ---------------------------------------------------------------------------
 class InputHookManager {
 public:
@@ -38,7 +38,7 @@ private:
     HHOOK _kbHook;
     HHOOK _mouseHook;
 
-    // 256-bit pressed-state bitmask.  Bit N = VK code N is currently down.
+    // Bitmask pressed-state 256-bit.  Bit N = VK code N hiện đang down.
     DWORD64 _keyState[4];   // 4 × 64 = 256 bits
 
     void SetKeyBit(DWORD vk);
@@ -48,7 +48,7 @@ private:
     static LRESULT CALLBACK KbProc  (int nCode, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam);
 
-    // Singleton pointer so static callbacks can reach the instance.
+    // Singleton pointer để static callbacks có thể reach instance.
     static InputHookManager* s_instance;
 };
 

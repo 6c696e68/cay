@@ -6,8 +6,8 @@
 namespace Cay {
 
 // ---------------------------------------------------------------------------
-// Tone mark indices (used as array subscripts throughout the engine).
-//   0 = no tone (flat / ngang)
+// Chỉ số dấu (dùng làm index array trong toàn bộ engine).
+//   0 = không dấu (ngang)
 //   1 = huyền  (f)
 //   2 = sắc    (s)
 //   3 = hỏi    (r)
@@ -18,46 +18,46 @@ namespace Cay {
 // ---------------------------------------------------------------------------
 // CayData
 //
-// Pure static helper class: validation tables and tone-marked character maps.
-// No instances, no dynamic allocation, no CRT.
+// Class helper static thuần túy: bảng validation và map ký tự có dấu.
+// Không có instance, không cấp phát động, không dùng CRT.
 // ---------------------------------------------------------------------------
 class CayData {
 public:
-    // Returns true if the null-terminated string `s` of length `len` is a
-    // recognised Vietnamese initial consonant cluster.
+    // Trả về true nếu chuỗi `s` (đã null-terminated) với độ dài `len`
+    // là một cụm phụ âm đầu tiếng Việt hợp lệ.
     static bool IsValidInitial(const wchar_t* s, int len);
 
-    // Returns true if the null-terminated string `s` of length `len` is a
-    // recognised Vietnamese vowel nucleus.
+    // Trả về true nếu chuỗi `s` (đã null-terminated) với độ dài `len`
+    // là một nguyên âm tiếng Việt hợp lệ.
     static bool IsValidNucleus(const wchar_t* s, int len);
 
-    // Map a Telex modifier key to a tone index (0–5).
-    // Returns -1 if the key is not a tone key.
+    // Map phím Telex modifier sang chỉ số dấu (0–5).
+    // Trả về -1 nếu phím không phải là phím dấu.
     static int  GetToneIndex(wchar_t key);
 
-    // Return the tone-marked codepoint for a given base vowel + tone index.
-    // Returns 0 if no mapping exists.
+    // Trả về codepoint có dấu cho nguyên âm cơ bản + chỉ số dấu.
+    // Trả về 0 nếu không có mapping.
     static wchar_t GetToneMark(wchar_t base, int toneIndex);
 
-    // Return true if `ch` is one of the Vietnamese-accented characters
-    // (has a hook, circumflex, breve, or tone mark already applied).
+    // Trả về true nếu `ch` là ký tự tiếng Việt có dấu
+    // (đã có dấu mũ, dấu hỏi, dấu ngắn hoặc dấu thanh).
     static bool HasVietnameseMark(wchar_t ch);
 
-    // Return true if any character in `buf[0..len)` carries a Vietnamese mark.
+    // Trả về true nếu bất kỳ ký tự nào trong `buf[0..len)` có dấu tiếng Việt.
     static bool HasVietnameseMark(const wchar_t* buf, int len);
 
-    // Strip tone from a vowel, returning the plain ASCII base (a/e/i/o/u/y).
-    // Returns `ch` unchanged if it is not a toned Vietnamese vowel.
+    // Bỏ dấu thanh từ nguyên âm, trả về nguyên âm ASCII thuần (a/e/i/o/u/y).
+    // Trả về `ch` không đổi nếu không phải nguyên âm có dấu.
     static wchar_t StripTone(wchar_t ch);
 
-    // Strip hook/circumflex/breve from a vowel, returning the plain ASCII base.
-    // Returns `ch` unchanged if it carries no such diacritic.
+    // Bỏ dấu mũ/dấu hỏi/dấu ngắn từ nguyên âm, trả về nguyên âm ASCII thuần.
+    // Trả về `ch` không đổi nếu không có dấu nào.
     static wchar_t StripAccent(wchar_t ch);
 
-    // Return true if `ch` is any form of a Vietnamese vowel (plain or accented).
+    // Trả về true nếu `ch` là bất kỳ dạng nào của nguyên âm tiếng Việt (thuần hoặc có dấu).
     static bool IsVowel(wchar_t ch);
 
-    // Get hook rule for a vowel
+    // Lấy quy tắc dấu mũ cho nguyên âm
     static wchar_t GetHookRule(wchar_t c);
 };
 

@@ -6,12 +6,12 @@ namespace CayIME {
 InputHookManager* InputHookManager::s_instance = nullptr;
 
 // ---------------------------------------------------------------------------
-// Construction / Destruction
+// Construction / Destruction - Khởi tạo / Hủy
 // ---------------------------------------------------------------------------
 InputHookManager::InputHookManager() {
     s_instance = this;
 
-    // Zero the 256-bit bitmask.
+    // Zero bitmask 256-bit.
     _keyState[0] = 0;
     _keyState[1] = 0;
     _keyState[2] = 0;
@@ -28,7 +28,7 @@ InputHookManager::~InputHookManager() {
 }
 
 // ---------------------------------------------------------------------------
-// 256-bit bitmask helpers
+// 256-bit bitmask helpers - Helper bitmask 256-bit
 // ---------------------------------------------------------------------------
 void InputHookManager::SetKeyBit(DWORD vk) {
     if (vk >= 256) return;
@@ -46,7 +46,7 @@ bool InputHookManager::TestKeyBit(DWORD vk) const {
 }
 
 // ---------------------------------------------------------------------------
-// Low-level keyboard hook procedure
+// Low-level keyboard hook procedure - Procedure hook keyboard low-level
 // ---------------------------------------------------------------------------
 LRESULT CALLBACK InputHookManager::KbProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode < 0 || !s_instance) {
@@ -60,10 +60,10 @@ LRESULT CALLBACK InputHookManager::KbProc(int nCode, WPARAM wParam, LPARAM lPara
 
     DWORD vk = kb->vkCode;
 
-    // Translate VK to a Unicode character (best-effort, single char).
+    // Dịch VK sang ký tự Unicode (best-effort, single char).
     wchar_t ch = 0;
     if (vk >= 'A' && vk <= 'Z') {
-        // Simple ASCII mapping: shift to lowercase unless Shift is held.
+        // Mapping ASCII đơn giản: shift sang lowercase trừ khi Shift được giữ.
         bool shifted = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
         bool capsLk = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
         bool upper = shifted ^ capsLk;
@@ -75,7 +75,7 @@ LRESULT CALLBACK InputHookManager::KbProc(int nCode, WPARAM wParam, LPARAM lPara
     bool isDown = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
     bool isUp   = (wParam == WM_KEYUP   || wParam == WM_SYSKEYUP);
 
-    // Debounce: skip key-down if already recorded as down.
+    // Debounce: skip key-down nếu đã được ghi nhận là down.
     if (isDown && s_instance->TestKeyBit(vk)) {
         return CallNextHookEx(nullptr, nCode, wParam, lParam);
     }
@@ -98,16 +98,16 @@ LRESULT CALLBACK InputHookManager::KbProc(int nCode, WPARAM wParam, LPARAM lPara
         }
     }
 
-    if (args.handled) return 1; // suppress the keystroke
+    if (args.handled) return 1; // suppress keystroke
     return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
 
 // ---------------------------------------------------------------------------
-// Low-level mouse hook procedure
+// Low-level mouse hook procedure - Procedure hook mouse low-level
 // ---------------------------------------------------------------------------
 LRESULT CALLBACK InputHookManager::MouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0 && s_instance) {
-        // Any mouse button press resets the engine.
+        // Bất kỳ nhấn nút mouse nào cũng reset engine.
         if (wParam == WM_LBUTTONDOWN || wParam == WM_RBUTTONDOWN ||
             wParam == WM_MBUTTONDOWN || wParam == WM_XBUTTONDOWN) {
             if (s_instance->MouseClick) {

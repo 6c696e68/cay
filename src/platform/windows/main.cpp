@@ -62,7 +62,7 @@ HICON CreateTrayIcon(COLORREF color) {
     DeleteDC(hMemDC);
     ReleaseDC(nullptr, hdc);
     
-    // Create monochrome mask (all 0s / black means opaque color bitmap)
+    // Tạo mask monochrome (tất cả 0s / đen nghĩa là bitmap màu opaque)
     BYTE maskBits[256] = {0};
     HBITMAP hMask = CreateBitmap(width, height, 1, 1, maskBits);
     
@@ -248,7 +248,7 @@ void OnMouseClickHook(CayIME::InputHookManager* sender) {
 }
 
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow) {
-    // Single instance check
+    // Kiểm tra single instance
     wchar_t mutexName[256];
     wchar_t userName[256];
     DWORD userNameLen = 256;
@@ -262,11 +262,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
         return 0;
     }
 
-    // Elevate priority
+    // Nâng priority
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 
-    // Initialize data (Removed because data is static)
+    // Khởi tạo data (Đã xóa vì data là static)
     g_iconOn = CreateTrayIcon(RGB(255, 0, 0));
     g_iconOff = CreateTrayIcon(RGB(128, 128, 128));
 
@@ -288,7 +288,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdL
     g_nid.uCallbackMessage = WM_TRAYICON;
     UpdateTrayIcon(true);
 
-    // Start Hooks
+    // Bắt đầu Hooks
     g_hookManager = new CayIME::InputHookManager();
     g_hookManager->KeyDown = OnKeyDownHook;
     g_hookManager->KeyUp = OnKeyUpHook;

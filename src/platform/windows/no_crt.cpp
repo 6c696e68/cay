@@ -1,16 +1,16 @@
 // no_crt.cpp
-// Provides the bare minimum symbols needed to replace the CRT when building
-// with /NODEFAULTLIB.  All implementations use Win32 Heap API only.
+// Cung cấp các symbol tối thiểu cần thiết để thay thế CRT khi build
+// với /NODEFAULTLIB. Tất cả implementation chỉ dùng Win32 Heap API.
 //
-// wcslen / wcscpy_s / wcscat / wmemcmp  -> resolved from ntdll.lib
-// memset / memcpy                       -> resolved from ntdll.lib (RtlFillMemory etc.)
+// wcslen / wcscpy_s / wcscat / wmemcmp  -> resolved từ ntdll.lib
+// memset / memcpy                       -> resolved từ ntdll.lib (RtlFillMemory etc.)
 //
-// This file only supplies C++ operator new / delete.
+// File này chỉ cung cấp C++ operator new / delete.
 
 #include <windows.h>
 
 // ---------------------------------------------------------------------------
-// Heap-based operator new / delete (no CRT)
+// Heap-based operator new / delete (không CRT)
 // ---------------------------------------------------------------------------
 void* __cdecl operator new(size_t size) {
     return HeapAlloc(GetProcessHeap(), 0, size ? size : 1);
@@ -28,7 +28,7 @@ void __cdecl operator delete[](void* ptr) noexcept {
     if (ptr) HeapFree(GetProcessHeap(), 0, ptr);
 }
 
-// Sized delete overloads (required by C++17 ABI)
+// Sized delete overloads (cần thiết bởi C++17 ABI)
 void __cdecl operator delete(void* ptr, size_t) noexcept {
     if (ptr) HeapFree(GetProcessHeap(), 0, ptr);
 }

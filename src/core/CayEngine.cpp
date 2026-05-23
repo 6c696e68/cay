@@ -1,28 +1,28 @@
-#include "CayEngine.h"
+﻿#include "CayEngine.h"
 
 // ============================================================================
 // CayEngine.cpp  –  Free-style Telex state machine (RULE 3)
 //
-// Architecture overview
+// Tổng quan kiến trúc
 // ---------------------
-// The engine maintains two parallel arrays:
-//   _buffer[_bufferCount]  – every raw keystroke the user typed
-//   _text[_textLen]        – the Unicode output that has been injected so far
+// Engine duy trì hai array song song:
+//   _buffer[_bufferCount]  – mọi phím thô user đã gõ
+//   _text[_textLen]        – Unicode output đã được inject đến hiện tại
 //
-// On each keydown the engine:
-//   1. Checks for special/control keys (Backspace, Escape, Space, etc.)
-//   2. Tries to apply the key as a double-key circumflex modifier.
-//   3. Tries to apply the key as a hook/breve modifier ('w').
-//   4. Tries to apply the key as a tone mark (s/f/r/x/j/z).
-//   5. Falls back to appending the character as a plain letter.
+// Trên mỗi keydown engine:
+//   1. Kiểm tra các phím đặc biệt/control (Backspace, Escape, Space, etc.)
+//   2. Thử áp dụng phím như modifier dấu mũ đôi.
+//   3. Thử áp dụng phím như modifier dấu mũ/dấu ngắn ('w').
+//   4. Thử áp dụng phím như dấu thanh (s/f/r/x/j/z).
+//   5. Fallback về thêm ký tự như chữ cái thuần.
 //
-// After every mutation the updated _text is injected via InputInjector::ReplaceText.
+// Sau mỗi mutation, _text đã được update được inject qua InputInjector::ReplaceText.
 // ============================================================================
 
 namespace Cay {
 
 // ---------------------------------------------------------------------------
-// Static helpers
+// Static helpers - Helper static
 // ---------------------------------------------------------------------------
 bool TelexEngine::IsAlpha(wchar_t ch) {
     return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z');
@@ -47,7 +47,7 @@ wchar_t TelexEngine::ToUpperViet(wchar_t c) {
 }
 
 // ---------------------------------------------------------------------------
-// Constructor
+// Constructor - Hàm khởi tạo
 // ---------------------------------------------------------------------------
 TelexEngine::TelexEngine() {
     _canRestore = false;
@@ -55,7 +55,7 @@ TelexEngine::TelexEngine() {
 }
 
 // ---------------------------------------------------------------------------
-// ResetState – zero everything without touching the display.
+// ResetState – zero tất cả mà không chạm vào display.
 // ---------------------------------------------------------------------------
 void TelexEngine::ResetState() {
     _bufferCount = 0;
@@ -71,7 +71,7 @@ void TelexEngine::ResetState() {
 }
 
 // ---------------------------------------------------------------------------
-// ResetFull – discard buffer and invalidate recall state.
+// ResetFull – discard buffer và invalidate recall state.
 // ---------------------------------------------------------------------------
 void TelexEngine::ResetFull() {
     ResetState();
@@ -79,7 +79,7 @@ void TelexEngine::ResetFull() {
 }
 
 // ---------------------------------------------------------------------------
-// SaveState – cache the current word state for recall.
+// SaveState – cache state từ hiện tại để recall.
 // ---------------------------------------------------------------------------
 void TelexEngine::SaveState() {
     if (_bufferCount > 0) {
@@ -95,7 +95,7 @@ void TelexEngine::SaveState() {
 }
 
 // ---------------------------------------------------------------------------
-// CommitWord – save state for recall, then reset.
+// CommitWord – lưu state để recall, sau đó reset.
 // ---------------------------------------------------------------------------
 void TelexEngine::CommitWord() {
     SaveState();
@@ -103,7 +103,7 @@ void TelexEngine::CommitWord() {
 }
 
 void TelexEngine::UpdateScreen(const wchar_t* newOutput, int newOutputLen) {
-    // 1. Check if identical
+    // 1. Kiểm tra xem có giống nhau không
     bool isIdentical = (_lastOutputLen == newOutputLen);
     if (isIdentical) {
         for (int i = 0; i < newOutputLen; i++) {
@@ -115,7 +115,7 @@ void TelexEngine::UpdateScreen(const wchar_t* newOutput, int newOutputLen) {
     }
     if (isIdentical) return;
 
-    // 2. Find common prefix
+    // 2. Tìm prefix chung
     int commonPrefixLen = 0;
     int minLen = _lastOutputLen < newOutputLen ? _lastOutputLen : newOutputLen;
     for (int i = 0; i < minLen; i++) {
@@ -126,12 +126,12 @@ void TelexEngine::UpdateScreen(const wchar_t* newOutput, int newOutputLen) {
         }
     }
 
-    // 3. Calculate exact diff without any dummy padding
+    // 3. Tính toán diff chính xác mà không có padding giả
     int backspacesNeeded = _lastOutputLen - commonPrefixLen;
     const wchar_t* textToType = newOutput + commonPrefixLen;
     int textToTypeLen = newOutputLen - commonPrefixLen;
 
-    // 4. Inject exact keystrokes
+    // 4. Inject phím chính xác
     if (backspacesNeeded > 0 || textToTypeLen > 0) {
         if (OnInjectText) OnInjectText(backspacesNeeded, textToType, textToTypeLen);
     }
@@ -145,18 +145,18 @@ void TelexEngine::UpdateScreen(const wchar_t* newOutput, int newOutputLen) {
 }
 
 // ---------------------------------------------------------------------------
-// Commit – replace the currently displayed word with _text[0.._textLen).
+// Commit – thay thế từ đang hiển thị bằng _text[0.._textLen).
 // ---------------------------------------------------------------------------
 void TelexEngine::Commit(int extraBs) {
     UpdateScreen(_text, _textLen);
 }
 
 // ---------------------------------------------------------------------------
-// FallbackToRaw – revert to the raw ASCII characters the user typed.
-// Called when the engine decides the input is English.
+// FallbackToRaw – revert về các ký tự ASCII thô user đã gõ.
+// Được gọi khi engine quyết định input là tiếng Anh.
 // ---------------------------------------------------------------------------
 void TelexEngine::FallbackToRaw() {
-    // Build raw ASCII string from _buffer.
+    // Xây chuỗi ASCII thô từ _buffer.
     wchar_t raw[MAX_BUFFER];
     int rawLen = 0;
     for (int i = 0; i < _bufferCount && rawLen < MAX_BUFFER - 1; i++) {
@@ -166,7 +166,7 @@ void TelexEngine::FallbackToRaw() {
 
     if (OnInjectText) OnInjectText(_textLen, raw, rawLen);
 
-    // Update _text to reflect the fallback.
+    // Update _text để phản ánh fallback.
     for (int i = 0; i < rawLen; i++) _text[i] = raw[i];
     _textLen = rawLen;
     _toneIndex = -1;
@@ -174,12 +174,12 @@ void TelexEngine::FallbackToRaw() {
 }
 
 // ---------------------------------------------------------------------------
-// LEVEL 2: Structural Validator — Pointer Walk Syllable Check
+// LEVEL 2: Validator cấu trúc — Kiểm tra âm tiết bằng cách walk pointer
 // ---------------------------------------------------------------------------
 static bool IsCompleteSyllable(const wchar_t* s, int len) {
     if (len == 0 || len > 20) return false;
 
-    // Bảng phụ âm đầu, sắp xếp: dài trước để tránh match ngắn hơn
+    // Bảng phụ âm đầu, sắp xếp: dài trước để tránh match ngắn hơn (đã có tiếng Việt)
     static const wchar_t* s_initials[] = {
         L"ngh", L"gh", L"gi", L"ng", L"nh", L"ph",
         L"qu", L"th", L"tr", L"ch", L"kh", L"đ",
@@ -189,7 +189,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
         L"" // empty string = không có phụ âm đầu
     };
 
-    // Bảng nhân nguyên âm hợp lệ, dài trước
+    // Bảng nhân nguyên âm hợp lệ, dài trước (đã có tiếng Việt)
     static const wchar_t* s_nuclei[] = {
         // 3 nguyên âm
         L"iêu", L"yêu", L"\u01b0\u01a1u", L"uôi", L"ươi", L"oai", L"oay",
@@ -215,14 +215,14 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
         L"y",
     };
 
-    // Bảng phụ âm cuối hợp lệ, dài trước
+    // Bảng phụ âm cuối hợp lệ, dài trước (đã có tiếng Việt)
     static const wchar_t* s_finals[] = {
         L"ng", L"nh", L"ch",
         L"c", L"m", L"n", L"p", L"t",
         L""  // không có phụ âm cuối
     };
 
-    // Bảng vần phụ (tail)
+    // Bảng vần phụ (tail) (đã có tiếng Việt)
     static const wchar_t* s_tails[] = {
         L"i", L"y", L"o", L"u",
         L""
@@ -239,7 +239,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
         return true;
     };
 
-    // ── BLOCK 1: Khớp phụ âm đầu ──────────────────────────────
+    // ── BLOCK 1: Khớp phụ âm đầu ────────────────────────────── (đã có tiếng Việt)
     const wchar_t* matchedInitial = nullptr;
     for (int i = 0; i < (int)(sizeof(s_initials)/sizeof(s_initials[0])); i++) {
         int ilen = CayStrLen(s_initials[i]);
@@ -251,16 +251,16 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
         }
     }
 
-    // Special case for "gi": if the remaining part does NOT start with a vowel
-    // (e.g. "gì", "gìn", "gíp"), it means 'i' is actually the nucleus.
+    // Special case cho "gi": nếu phần còn lại KHÔNG bắt đầu bằng nguyên âm
+    // (ví dụ "gì", "gìn", "gíp"), có nghĩa là 'i' thực sự là nhân nguyên âm.
     if (matchedInitial && matchedInitial[0] == L'g' && matchedInitial[1] == L'i' && matchedInitial[2] == L'\0') {
         if (pos == end || !CayData::IsVowel(CayData::StripTone(*pos))) {
-            pos--; // Roll back 1 character so 'i' becomes the nucleus
+            pos--; // Roll back 1 character để 'i' trở thành nhân nguyên âm
         }
     }
     if (!matchedInitial) return false;
 
-    // ── BLOCK 2: Khớp nhân nguyên âm (bắt buộc) ───────────────
+    // ── BLOCK 2: Khớp nhân nguyên âm (bắt buộc) ─────────────── (đã có tiếng Việt)
     const wchar_t* matchedNucleus = nullptr;
     for (int i = 0; i < (int)(sizeof(s_nuclei)/sizeof(s_nuclei[0])); i++) {
         int nlen = CayStrLen(s_nuclei[i]);
@@ -272,7 +272,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
     }
     if (!matchedNucleus) return false;
 
-    // ── BLOCK 3: Khớp phụ âm cuối (tùy chọn) ─────────────────
+    // ── BLOCK 3: Khớp phụ âm cuối (tùy chọn) ───────────────── (đã có tiếng Việt)
     for (int i = 0; i < (int)(sizeof(s_finals)/sizeof(s_finals[0])); i++) {
         int flen = CayStrLen(s_finals[i]);
         if (flen == 0) break;
@@ -282,7 +282,7 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
         }
     }
 
-    // ── BLOCK 4: Khớp tail (tùy chọn) ────────────────────────
+    // ── BLOCK 4: Khớp tail (tùy chọn) ──────────────────────── (đã có tiếng Việt)
     for (int i = 0; i < (int)(sizeof(s_tails)/sizeof(s_tails[0])); i++) {
         int tlen = CayStrLen(s_tails[i]);
         if (tlen == 0) break;
@@ -292,15 +292,15 @@ static bool IsCompleteSyllable(const wchar_t* s, int len) {
         }
     }
 
-    // ── KIỂM TRA KẾT THÚC ──
+    // ── KIỂM TRA KẾT THÚC ── (đã có tiếng Việt)
     return (pos == end);
 }
 
 // ---------------------------------------------------------------------------
 // ShouldBypassWord
 //
-// Returns true if the current typed sequence looks English and should bypass
-// Vietnamese transformation.
+// Trả về true nếu sequence hiện tại trông giống tiếng Anh và nên bypass
+// transform tiếng Việt.
 // ---------------------------------------------------------------------------
 bool TelexEngine::ShouldBypassWord() const {
     if (CayData::HasVietnameseMark(_text, _textLen)) return false;
@@ -313,18 +313,18 @@ bool TelexEngine::ShouldBypassWord() const {
         raw[i] = ToLowerViet(_buffer[i].raw);
     }
 
-    // LEVEL 1: Hard Filter — Invalid initial clusters
+    // LEVEL 1: Hard Filter — Cụm phụ âm đầu không hợp lệ
     if (raw[0] == L'w' || raw[0] == L'f' || raw[0] == L'j' || raw[0] == L'z') return true;
 
     if (len >= 2) {
         // Lu?t Q: B?t bu?c di v?i u
         if (raw[0] == L'q' && raw[1] != L'u') return true;
         
-        // Lu?t P: B?t bu?c di v?i h (B? qua c�c t? mu?n nhu pin, pa-t� d? t?i uu g� public, padding)
+        // Lu?t P: B?t bu?c di v?i h (B? qua c�c t? mu?n nhu pin, pa-t� d? t?i uu g� public, padding)
         if (raw[0] == L'p' && raw[1] != L'h') return true;
 
-        // Lu?t Ph? �m k�p: Ti?ng Vi?t ch? c� 8 c?p ph? �m k�p h?p l? ? d?u t?.
-        // Helper: Ki?m tra xem k� t? c� ph?i l� ph? �m ASCII kh�ng
+        // Lu?t Ph? �m k�p: Ti?ng Vi?t ch? c� 8 c?p ph? �m k�p h?p l? ? d?u t?.
+        // Helper: Ki?m tra xem k� t? c� ph?i l� ph? �m ASCII kh�ng
         auto isConsonant = [](wchar_t c) {
             return (c >= L'a' && c <= L'z') && 
                    (c != L'a' && c != L'e' && c != L'i' && c != L'o' && c != L'u' && c != L'y');
@@ -338,9 +338,9 @@ bool TelexEngine::ShouldBypassWord() const {
                 (raw[0] == L'n' && (raw[1] == L'g' || raw[1] == L'h')) ||
                 (raw[0] == L'p' && raw[1] == L'h') ||
                 (raw[0] == L't' && (raw[1] == L'h' || raw[1] == L'r')) ||
-                (raw[0] == L'd' && raw[1] == L'd'); // <--- B? SUNG NGO?I L? CHO CH? "�" T?I ��Y
+                (raw[0] == L'd' && raw[1] == L'd'); // <--- B? SUNG NGO?I L? CHO CH? "�" T?I ��Y
             
-            // N?u l� 2 ph? �m d?ng d?u nhung kh�ng n?m trong danh s�ch tr�n -> 100% English (vd: class, style, block)
+            // N?u l� 2 ph? �m d?ng d?u nhung kh�ng n?m trong danh s�ch tr�n -> 100% English (vd: class, style, block)
             if (!validVietCluster) return true;
         }
         if (raw[0] == L'c' && (raw[1] == L'i' || raw[1] == L'e' || raw[1] == L'\u00EA' || raw[1] == L'y')) return true;
@@ -861,6 +861,7 @@ void TelexEngine::OnKeyUp(Cay::KeyEvent& e) {
 }
 
 } // namespace Cay
+
 
 
 
