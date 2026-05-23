@@ -337,7 +337,8 @@ bool TelexEngine::ShouldBypassWord() const {
                 (raw[0] == L'k' && raw[1] == L'h') ||
                 (raw[0] == L'n' && (raw[1] == L'g' || raw[1] == L'h')) ||
                 (raw[0] == L'p' && raw[1] == L'h') ||
-                (raw[0] == L't' && (raw[1] == L'h' || raw[1] == L'r'));
+                (raw[0] == L't' && (raw[1] == L'h' || raw[1] == L'r')) ||
+                (raw[0] == L'd' && raw[1] == L'd'); // <--- B? SUNG NGO?I L? CHO CH? "Ð" T?I ÐÂY
             
             // N?u là 2 ph? âm d?ng d?u nhung không n?m trong danh sách trên -> 100% English (vd: class, style, block)
             if (!validVietCluster) return true;
@@ -860,6 +861,7 @@ void TelexEngine::OnKeyUp(Cay::KeyEvent& e) {
 }
 
 } // namespace Cay
+
 
 
 
