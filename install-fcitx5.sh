@@ -90,6 +90,15 @@ else
     fi
 fi
 
+# Đặt Fcitx5 làm bộ gõ mặc định của hệ thống (giúp tự khởi động cùng Ubuntu/Debian)
+echo -e "\n${YELLOW}[4/4] Setting Fcitx5 as default system input method (Autostart)...${NC}"
+if command -v im-config >/dev/null 2>&1; then
+    im-config -n fcitx5
+else
+    # Fallback nếu không có im-config
+    echo "run_im fcitx5" > ~/.xinputrc
+fi
+
 # Khởi động lại Fcitx5 trong nền để nạp cấu hình mới (tắt tiếng/output)
 fcitx5 -r -d > /dev/null 2>&1
 
