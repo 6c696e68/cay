@@ -12,9 +12,14 @@ public:
     void keyEvent(const fcitx::InputMethodEntry& entry, fcitx::KeyEvent& keyEvent) override;
     void reset(const fcitx::InputMethodEntry& entry, fcitx::InputContextEvent& event) override;
 
+    // Member helper for injection
+    void injectText(int backspaceCount, const wchar_t* newText, int newTextLen);
+
 private:
     fcitx::Instance* instance_;
     Cay::TelexEngine engine_;
+    fcitx::InputContext* current_ic_;
+    std::wstring current_preedit_;
 
     // Helper to convert fcitx::Key to Cay::KeyEvent
     bool convertKeyEvent(fcitx::KeyEvent& fcitxEvent, Cay::KeyEvent& cayEvent);

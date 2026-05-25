@@ -1,4 +1,6 @@
 #!/bin/bash
+# GitHub: https://github.com/tctvn/cay
+# Lệnh cài đặt: wget -qO- https://raw.githubusercontent.com/tctvn/cay/main/scripts/install-mac.sh | bash
 
 # CayIME - macOS Automatic Installer Script
 # This script downloads the pre-built CayIME macOS app from GitHub and installs it.
@@ -38,7 +40,10 @@ echo -e "\n${YELLOW}[2/3] Extracting and installing to /Applications...${NC}"
 unzip -q "$ASSET_NAME"
 
 # Close app if running
+echo -e "\n${YELLOW}[2.5/3] Closing existing app...${NC}"
 killall cay 2>/dev/null || true
+sleep 1
+killall -9 cay 2>/dev/null || true
 
 # Copy to Applications (may require sudo if permissions are tight, but usually user can copy)
 if [ -d "$APP_PATH" ]; then

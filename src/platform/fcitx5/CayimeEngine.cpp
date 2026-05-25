@@ -3,8 +3,11 @@
 #include <fcitx-utils/utf8.h>
 #include <fcitx/inputcontext.h>
 
+#include <fcitx/inputpanel.h>
+#include <fcitx/text.h>
+
 // Global context pointer for the callback (since CayEngine uses a raw function pointer)
-static fcitx::InputContext* g_current_ic = nullptr;
+static CayimeEngine* g_current_engine = nullptr;
 
 // Helper to convert wstring to utf8 string without deprecated wstring_convert
 static std::string utf8_from_wstring(const std::wstring& wstr) {
@@ -30,36 +33,48 @@ static std::string utf8_from_wstring(const std::wstring& wstr) {
 }
 
 static void GlobalInjectText(int backspaceCount, const wchar_t* newText, int newTextLen) {
-    if (!g_current_ic) return;
-    
-    if (backspaceCount > 0) {
-        bool supportsSurrounding = g_current_ic->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
-        std::string prog = g_current_ic->program();
-        
-        // Many Linux terminals claim SurroundingText support but ignore deleteSurroundingText (VTE bugs).
-        // We force fallback to raw Backspace keys for known terminal emulators.
-        if (prog.find("terminal") != std::string::npos || 
-            prog.find("alacritty") != std::string::npos ||
-            prog.find("kitty") != std::string::npos ||
-            prog.find("konsole") != std::string::npos ||
-            prog.find("terminator") != std::string::npos ||
-            prog.find("wezterm") != std::string::npos ||
-            prog.find("tmux") != std::string::npos) {
-            supportsSurrounding = false;
-        }
-
-        if (supportsSurrounding) {
-            g_current_ic->deleteSurroundingText(-backspaceCount, backspaceCount);
-        } else {
-            for (int i = 0; i < backspaceCount; ++i) {
-                g_current_ic->forwardKey(fcitx::Key(FcitxKey_BackSpace));
-            }
-        }
+    if (g_current_engine) {
+        g_current_engine->injectText(backspaceCount, newText, newTextLen);
     }
+}
+
+void CayimeEngine::injectText(int backspaceCount, const wchar_t* newText, int newTextLen) {
+    if (!current_ic_) return;
     
-    if (newTextLen > 0) {
-        std::wstring wstr(newText, newTextLen);
-        g_current_ic->commitString(utf8_from_wstring(wstr));
+    bool usePreedit = !current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+    
+    if (!usePreedit) {
+        if (backspaceCount > 0) {
+            current_ic_->deleteSurroundingText(-backspaceCount, backspaceCount);
+        }
+        
+        if (newTextLen > 0) {
+            std::wstring wstr(newText, newTextLen);
+            current_ic_->commitString(utf8_from_wstring(wstr));
+        }
+    } else {
+        if (backspaceCount > 0 && current_preedit_.length() >= (size_t)backspaceCount) {
+            current_preedit_.erase(current_preedit_.length() - backspaceCount);
+        }
+        
+        if (newTextLen > 0) {
+            current_preedit_.append(newText, newTextLen);
+        }
+        
+        fcitx::Text preedit;
+        preedit.append(utf8_from_wstring(current_preedit_), fcitx::TextFormatFlag::Underline);
+        preedit.setCursor(preedit.textLength());
+        
+        if (current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::Preedit)) {
+            current_ic_->inputPanel().setClientPreedit(preedit);
+            current_ic_->inputPanel().setPreedit(fcitx::Text());
+        } else {
+            current_ic_->inputPanel().setPreedit(preedit);
+            current_ic_->inputPanel().setClientPreedit(fcitx::Text());
+        }
+        
+        current_ic_->updatePreedit();
+        current_ic_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
     }
 }
 
@@ -71,7 +86,18 @@ CayimeEngine::CayimeEngine(fcitx::Instance* instance)
 CayimeEngine::~CayimeEngine() {
 }
 
-void CayimeEngine::reset(const fcitx::InputMethodEntry& /*entry*/, fcitx::InputContextEvent& /*event*/) {
+void CayimeEngine::reset(const fcitx::InputMethodEntry& /*entry*/, fcitx::InputContextEvent& event) {
+    if (!current_preedit_.empty()) {
+        // Clear preedit without committing so it doesn't jump to the new cursor position
+        current_preedit_.clear();
+        
+        // Explicitly tell Fcitx5 to clear the UI to remove the underline frame
+        event.inputContext()->inputPanel().reset();
+        event.inputContext()->updatePreedit();
+        event.inputContext()->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    }
+    
+    // Reset CayEngine
     engine_.ResetFull();
 }
 
@@ -98,9 +124,18 @@ bool CayimeEngine::convertKeyEvent(fcitx::KeyEvent& fcitxEvent, Cay::KeyEvent& c
         cayEvent.handled = false;
         return true;
     }
-    if (key.sym() == FcitxKey_Return || key.sym() == FcitxKey_KP_Enter) { cayEvent.keyCode = Cay::KeyCode::Enter; return true; }
-    if (key.sym() == FcitxKey_Escape) { cayEvent.keyCode = Cay::KeyCode::Escape; return true; }
-    if (key.sym() == FcitxKey_Tab) { cayEvent.keyCode = Cay::KeyCode::Tab; return true; }
+    if (key.sym() == FcitxKey_Return || key.sym() == FcitxKey_KP_Enter) { 
+        engine_.ResetFull();
+        return false; 
+    }
+    if (key.sym() == FcitxKey_Escape) { 
+        engine_.ResetFull();
+        return false; 
+    }
+    if (key.sym() == FcitxKey_Tab) { 
+        engine_.ResetFull();
+        return false; 
+    }
     if (key.sym() == FcitxKey_Left || key.sym() == FcitxKey_KP_Left) { cayEvent.keyCode = Cay::KeyCode::Left; return true; }
     if (key.sym() == FcitxKey_Right || key.sym() == FcitxKey_KP_Right) { cayEvent.keyCode = Cay::KeyCode::Right; return true; }
     if (key.sym() == FcitxKey_Up || key.sym() == FcitxKey_KP_Up) { cayEvent.keyCode = Cay::KeyCode::Up; return true; }
@@ -129,19 +164,48 @@ void CayimeEngine::keyEvent(const fcitx::InputMethodEntry& /*entry*/, fcitx::Key
                     
     if (states & mask) {
         engine_.ResetFull(); // Reset engine state on shortcuts (like Ctrl+A)
+        current_preedit_.clear();
         return;
     }
 
     Cay::KeyEvent cayEvent;
     if (convertKeyEvent(keyEvent, cayEvent)) {
-        g_current_ic = keyEvent.inputContext();
+        g_current_engine = this;
+        current_ic_ = keyEvent.inputContext();
+        
+        bool usePreedit = !current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
         
         engine_.OnKeyDown(cayEvent);
         
         if (cayEvent.handled) {
             keyEvent.filterAndAccept();
+        } else {
+            // Key not handled by CayEngine. If we have a preedit, commit it now before passing key.
+            if (usePreedit && !current_preedit_.empty()) {
+                current_ic_->commitString(utf8_from_wstring(current_preedit_));
+                current_preedit_.clear();
+                current_ic_->inputPanel().reset();
+                current_ic_->updatePreedit();
+                current_ic_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+            }
         }
         
-        g_current_ic = nullptr;
+        current_ic_ = nullptr;
+        g_current_engine = nullptr;
+    } else {
+        // Phím không được CayIME xử lý (ví dụ: phím mũi tên, Esc, F1-F12...).
+        // Bắt buộc phải chốt (commit) và dọn sạch khung chữ đang gõ dở TRƯỚC KHI phím lọt xuống ứng dụng.
+        // Nếu không, khung chữ sẽ khóa cứng phím mũi tên hoặc làm loạn con trỏ chuột.
+        if (!current_preedit_.empty()) {
+            bool usePreedit = !keyEvent.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+            if (usePreedit) {
+                keyEvent.inputContext()->commitString(utf8_from_wstring(current_preedit_));
+                keyEvent.inputContext()->inputPanel().reset();
+                keyEvent.inputContext()->updatePreedit();
+                keyEvent.inputContext()->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+            }
+            current_preedit_.clear();
+            engine_.ResetFull();
+        }
     }
 }

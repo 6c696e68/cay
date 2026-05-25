@@ -1,4 +1,6 @@
 <#
+# GitHub: https://github.com/tctvn/cay
+# Lệnh cài đặt: irm https://raw.githubusercontent.com/tctvn/cay/main/scripts/install-windows.ps1 | iex
 .SYNOPSIS
 CayIME Automatic Installer for Windows
 Downloads the latest release and installs it to LocalAppData.
@@ -17,6 +19,9 @@ $installDir = "$env:LOCALAPPDATA\CayIME"
 $exePath = "$installDir\cay.exe"
 
 Write-Host "`n[1/3] Downloading latest CayIME from GitHub..." -ForegroundColor Yellow
+# Kill existing instance if running so the file isn't locked
+Get-Process cay -ErrorAction SilentlyContinue | Stop-Process -Force
+
 if (!(Test-Path -Path $installDir)) {
     New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 }
@@ -42,7 +47,7 @@ if (!(Test-Path -Path $cayConfigKey)) {
 Set-ItemProperty -Path $cayConfigKey -Name "FirstLaunch" -Value 1 -Type DWord
 
 Write-Host "`n[3/3] Starting CayIME..." -ForegroundColor Yellow
-# Kill existing instance if running
+# (Already killed at the top, just start it)
 Get-Process cay -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Process -FilePath $exePath
 

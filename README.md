@@ -14,18 +14,20 @@ Mở Terminal/PowerShell và dán dòng lệnh tương ứng để tự động 
 
 **🪟 Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/tctvn/cay/main/install-windows.ps1 | iex
+irm https://raw.githubusercontent.com/tctvn/cay/main/scripts/install-windows.ps1 | iex
 ```
 
 **🍏 macOS (Terminal):**
 ```bash
-curl -sL https://raw.githubusercontent.com/tctvn/cay/main/install-mac.sh | bash
+curl -sL https://raw.githubusercontent.com/tctvn/cay/main/scripts/install-mac.sh | bash
 ```
 
 **🐧 Linux / Fcitx5 (Bash):**
 ```bash
-wget -qO- https://raw.githubusercontent.com/tctvn/cay/main/install-fcitx5.sh | bash
+wget -qO- https://raw.githubusercontent.com/tctvn/cay/main/scripts/install-fcitx5.sh | bash
 ```
+
+> **Ghi chú gỡ cài đặt:** Nếu muốn gỡ cài đặt, bạn có thể tải về repo và chạy các file tương ứng trong thư mục `scripts/` (`uninstall-windows.ps1`, `uninstall-mac.sh`, `uninstall-fcitx5.sh`).
 
 ---
 

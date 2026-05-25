@@ -1,4 +1,6 @@
 #!/bin/bash
+# GitHub: https://github.com/tctvn/cay
+# Lệnh cài đặt: wget -qO- https://raw.githubusercontent.com/tctvn/cay/main/scripts/install-fcitx5.sh | bash
 
 # CayIME - Fcitx5 Automatic Installer Script
 # This script downloads the pre-built Fcitx5 plugin from GitHub and installs it.
@@ -33,8 +35,17 @@ fi
 # Step 2: Extract and install
 echo -e "\n${YELLOW}[2/3] Extracting and installing plugin to system (/usr)...${NC}"
 tar -xzf "$ASSET_NAME"
+
+# Kill fcitx5 before installing to release file locks
+echo -e "Stopping Fcitx5 to release file locks..."
+killall fcitx5 2>/dev/null || true
+sleep 1
+killall -9 fcitx5 2>/dev/null || true
+sleep 1
+
 echo "We need your password (sudo) to copy files to /usr/lib and /usr/share."
-sudo cp -r usr/* /usr/
+# Use -f to force overwrite
+sudo cp -rf usr/* /usr/
 
 # Cleanup
 cd ~
@@ -87,10 +98,10 @@ else
         echo "[Groups/0/Items/0]" >> "$PROFILE"
         echo "Name=cayime" >> "$PROFILE"
         echo "Layout=" >> "$PROFILE"
-        
-        # Cập nhật DefaultIM thành cayime (Tùy chọn: giúp user gõ tiếng Việt ngay lập tức)
-        sed -i 's/^DefaultIM=.*/DefaultIM=cayime/' "$PROFILE"
     fi
+    
+    # Luôn luôn ép cập nhật DefaultIM thành cayime để gõ tiếng Việt ngay lập tức
+    sed -i 's/^DefaultIM=.*/DefaultIM=cayime/' "$PROFILE"
 fi
 
 # Đặt Fcitx5 làm bộ gõ mặc định của hệ thống (giúp tự khởi động cùng Ubuntu/Debian)

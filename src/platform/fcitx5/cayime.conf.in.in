@@ -7,8 +7,3 @@ Type=SharedLibrary
 OnDemand=True
 Configurable=False
 
-[Addon/Dependencies]
-0=core:
-
-[Addon/OptionalDependencies]
-0=kimpanel:
