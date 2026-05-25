@@ -107,7 +107,8 @@ mkdir -p ~/.config/autostart
 cp /usr/share/applications/org.fcitx.Fcitx5.desktop ~/.config/autostart/ 2>/dev/null || true
 
 # Khởi động lại Fcitx5 trong nền để nạp cấu hình mới (tắt tiếng/output)
-fcitx5 -r -d > /dev/null 2>&1
+nohup fcitx5 -r -d >/dev/null 2>&1 &
+disown
 
 echo -e "\n${GREEN}================================================${NC}"
 echo -e "${GREEN}   Installation Successful!                     ${NC}"
