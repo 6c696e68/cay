@@ -41,7 +41,24 @@ static void GlobalInjectText(int backspaceCount, const wchar_t* newText, int new
 void CayimeEngine::injectText(int backspaceCount, const wchar_t* newText, int newTextLen) {
     if (!current_ic_) return;
     
-    bool usePreedit = forcePreedit_ || !current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+    bool supportsSurrounding = current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+    
+    // Many Linux terminals claim SurroundingText support but ignore deleteSurroundingText (VTE bugs).
+    // Force fallback for known terminal emulators.
+    if (supportsSurrounding) {
+        std::string prog = current_ic_->program();
+        if (prog.find("terminal") != std::string::npos || 
+            prog.find("alacritty") != std::string::npos ||
+            prog.find("kitty") != std::string::npos ||
+            prog.find("konsole") != std::string::npos ||
+            prog.find("terminator") != std::string::npos ||
+            prog.find("wezterm") != std::string::npos ||
+            prog.find("tmux") != std::string::npos) {
+            supportsSurrounding = false;
+        }
+    }
+    
+    bool usePreedit = forcePreedit_ || !supportsSurrounding;
     
     if (!usePreedit) {
         if (backspaceCount > 0) {
