@@ -1,6 +1,6 @@
 [InputMethod]
 Name=CayIME
-Icon=cayime
+Icon=input-keyboard
 Label=Cay
 LangCode=vi
 Addon=cayime

@@ -144,18 +144,9 @@ bool CayimeEngine::convertKeyEvent(fcitx::KeyEvent& fcitxEvent, Cay::KeyEvent& c
         cayEvent.handled = false;
         return true;
     }
-    if (key.sym() == FcitxKey_Return || key.sym() == FcitxKey_KP_Enter) { 
-        engine_.ResetFull();
-        return false; 
-    }
-    if (key.sym() == FcitxKey_Escape) { 
-        engine_.ResetFull();
-        return false; 
-    }
-    if (key.sym() == FcitxKey_Tab) { 
-        engine_.ResetFull();
-        return false; 
-    }
+    if (key.sym() == FcitxKey_Return || key.sym() == FcitxKey_KP_Enter) { cayEvent.keyCode = Cay::KeyCode::Enter; return true; }
+    if (key.sym() == FcitxKey_Escape) { cayEvent.keyCode = Cay::KeyCode::Escape; return true; }
+    if (key.sym() == FcitxKey_Tab) { cayEvent.keyCode = Cay::KeyCode::Tab; return true; }
     if (key.sym() == FcitxKey_Left || key.sym() == FcitxKey_KP_Left) { cayEvent.keyCode = Cay::KeyCode::Left; return true; }
     if (key.sym() == FcitxKey_Right || key.sym() == FcitxKey_KP_Right) { cayEvent.keyCode = Cay::KeyCode::Right; return true; }
     if (key.sym() == FcitxKey_Up || key.sym() == FcitxKey_KP_Up) { cayEvent.keyCode = Cay::KeyCode::Up; return true; }
@@ -226,9 +217,8 @@ void CayimeEngine::keyEvent(const fcitx::InputMethodEntry& /*entry*/, fcitx::Key
         current_ic_ = nullptr;
         g_current_engine = nullptr;
     } else {
-        // Phím không được CayIME xử lý (ví dụ: phím mũi tên, Esc, F1-F12...).
+        // Phím không được CayIME xử lý (ví dụ: F1-F12...).
         // Bắt buộc phải chốt (commit) và dọn sạch khung chữ đang gõ dở TRƯỚC KHI phím lọt xuống ứng dụng.
-        // Nếu không, khung chữ sẽ khóa cứng phím mũi tên hoặc làm loạn con trỏ chuột.
         if (!current_preedit_.empty()) {
             bool usePreedit = forcePreedit_ || !keyEvent.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
             if (usePreedit) {
