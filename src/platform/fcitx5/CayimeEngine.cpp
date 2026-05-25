@@ -33,7 +33,22 @@ static void GlobalInjectText(int backspaceCount, const wchar_t* newText, int new
     if (!g_current_ic) return;
     
     if (backspaceCount > 0) {
-        if (g_current_ic->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText)) {
+        bool supportsSurrounding = g_current_ic->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+        std::string prog = g_current_ic->program();
+        
+        // Many Linux terminals claim SurroundingText support but ignore deleteSurroundingText (VTE bugs).
+        // We force fallback to raw Backspace keys for known terminal emulators.
+        if (prog.find("terminal") != std::string::npos || 
+            prog.find("alacritty") != std::string::npos ||
+            prog.find("kitty") != std::string::npos ||
+            prog.find("konsole") != std::string::npos ||
+            prog.find("terminator") != std::string::npos ||
+            prog.find("wezterm") != std::string::npos ||
+            prog.find("tmux") != std::string::npos) {
+            supportsSurrounding = false;
+        }
+
+        if (supportsSurrounding) {
             g_current_ic->deleteSurroundingText(-backspaceCount, backspaceCount);
         } else {
             for (int i = 0; i < backspaceCount; ++i) {
