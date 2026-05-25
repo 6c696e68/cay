@@ -33,7 +33,13 @@ static void GlobalInjectText(int backspaceCount, const wchar_t* newText, int new
     if (!g_current_ic) return;
     
     if (backspaceCount > 0) {
-        g_current_ic->deleteSurroundingText(-backspaceCount, backspaceCount);
+        if (g_current_ic->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText)) {
+            g_current_ic->deleteSurroundingText(-backspaceCount, backspaceCount);
+        } else {
+            for (int i = 0; i < backspaceCount; ++i) {
+                g_current_ic->forwardKey(fcitx::Key(FcitxKey_BackSpace));
+            }
+        }
     }
     
     if (newTextLen > 0) {

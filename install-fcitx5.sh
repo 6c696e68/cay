@@ -55,11 +55,11 @@ Default Layout=us
 DefaultIM=cayime
 
 [Groups/0/Items/0]
-Name=keyboard-us
+Name=cayime
 Layout=
 
 [Groups/0/Items/1]
-Name=cayime
+Name=keyboard-us
 Layout=
 
 [GroupOrder]
@@ -79,9 +79,12 @@ else
             NEXT_ITEM=$((MAX_ITEM + 1))
         fi
         
-        # Bơm cấu hình CayIME vào cuối danh sách
+        # Đẩy bộ gõ đang ở vị trí 0 xuống cuối (NEXT_ITEM) để nhường chỗ cho CayIME
+        sed -i "s/\[Groups\/0\/Items\/0\]/\[Groups\/0\/Items\/$NEXT_ITEM\]/g" "$PROFILE"
+        
+        # Bơm cấu hình CayIME vào vị trí 0 (Ưu tiên cao nhất)
         echo "" >> "$PROFILE"
-        echo "[Groups/0/Items/$NEXT_ITEM]" >> "$PROFILE"
+        echo "[Groups/0/Items/0]" >> "$PROFILE"
         echo "Name=cayime" >> "$PROFILE"
         echo "Layout=" >> "$PROFILE"
         
@@ -98,6 +101,10 @@ else
     # Fallback nếu không có im-config
     echo "run_im fcitx5" > ~/.xinputrc
 fi
+
+# Ép tự khởi động Fcitx5 bằng desktop entry (sửa lỗi GNOME Wayland)
+mkdir -p ~/.config/autostart
+cp /usr/share/applications/org.fcitx.Fcitx5.desktop ~/.config/autostart/ 2>/dev/null || true
 
 # Khởi động lại Fcitx5 trong nền để nạp cấu hình mới (tắt tiếng/output)
 fcitx5 -r -d > /dev/null 2>&1
