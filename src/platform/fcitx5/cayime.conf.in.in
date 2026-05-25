@@ -1,0 +1,14 @@
+[Addon]
+Name=CayIME
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=cayime-fcitx5
+Type=SharedLibrary
+OnDemand=True
+Configurable=False
+
+[Addon/Dependencies]
+0=core:
+
+[Addon/OptionalDependencies]
+0=kimpanel:

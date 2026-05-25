@@ -1,0 +1,7 @@
+[InputMethod]
+Name=CayIME
+Icon=input-keyboard
+Label=Cay
+LangCode=vi
+Addon=cayime
+Configurable=False
