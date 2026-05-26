@@ -4,4 +4,6 @@
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
 
+- (void)updateIcon;
+
 @end

@@ -1,4 +1,23 @@
 #pragma once
+// ============================================================================
+// CayEngine.h — TelexEngine state machine (xử lý chính của Cay)
+//
+// Sở hữu state (đều là array tĩnh kích thước Cay::MAX_BUFFER từ CayTypes.h):
+//   - _buffer[MAX_BUFFER]  : phím thô user gõ (MyKey)
+//   - _text  [MAX_BUFFER]  : ký tự output hiện tại (đã transform)
+//   - _toneIndex / _saved* : metadata commit & recall từ
+//
+// Tất cả modifier (double, hook, tone) áp bằng backward-scan trên _text
+// (QUY TẮC 3). Mọi bảng âm tiết được tham chiếu qua API CayData — engine
+// KHÔNG redefine s_initials/s_nuclei/s_finals/s_tails.
+//
+// API chính: TelexEngine::OnKeyDown / OnKeyUp / ResetFull / CommitWord;
+// callback Cay::InjectTextFunc OnInjectText = nullptr (do platform set).
+//
+// Ràng buộc:
+//   * No-CRT / No-STL / No-alloc / No-except — phù hợp Windows no-CRT build.
+//   * Dùng Cay::MAX_BUFFER (CayTypes.h) — không hardcode 64 trong file này.
+// ============================================================================
 #include "CayData.h"
 #include "CayTypes.h"
 
@@ -12,6 +31,34 @@ struct MyKey {
     wchar_t raw;       // Ký tự thô người dùng gõ (ví dụ 'a', 'w', 's')
     wchar_t output;    // Ký tự hiện tại trong output text
 };
+
+#ifdef CAY_TEST_BUILD
+// ---------------------------------------------------------------------------
+// DebugState (test-only) — snapshot toàn bộ field nội bộ của TelexEngine
+// để Property 11 / 12 (test/test_idempotency.cpp) so sánh state.
+//
+// Layout phản chiếu đúng các field private của TelexEngine. Các array dùng
+// kích thước Cay::MAX_BUFFER cố định nên struct là POD; test code có thể
+// so sánh field-by-field hoặc memcmp tuỳ ý (free operator== trong test file).
+//
+// Validates: Requirements 10.1, 10.2, 10.3
+// ---------------------------------------------------------------------------
+struct DebugState {
+    MyKey   buffer[MAX_BUFFER];
+    int     bufferCount;
+    wchar_t text[MAX_BUFFER];
+    int     textLen;
+    int     toneIndex;
+    wchar_t lastOutput[MAX_BUFFER];
+    int     lastOutputLen;
+    MyKey   savedBuffer[MAX_BUFFER];
+    int     savedBufferCount;
+    wchar_t savedText[MAX_BUFFER];
+    int     savedTextLen;
+    int     savedToneIndex;
+    bool    canRestore;
+};
+#endif
 
 // ---------------------------------------------------------------------------
 // TelexEngine
@@ -33,7 +80,8 @@ public:
     // Được gọi mỗi khi keydown (main.cpp delegate đến đây).
     void OnKeyDown(Cay::KeyEvent& e);
 
-    // Được gọi mỗi khi keyup (hiện tại không làm gì, dành cho tương lai).
+    // Required by platform contract (Windows KeyboardHookManager,
+    // MacHookManager forward keyup events). Currently no-op.
     void OnKeyUp(Cay::KeyEvent& e);
 
     // Hard reset: flush buffer và discard tất cả state.
@@ -43,6 +91,41 @@ public:
     void CommitWord();
 
     InjectTextFunc OnInjectText = nullptr;
+
+#ifdef CAY_TEST_BUILD
+    // -----------------------------------------------------------------------
+    // Test-only accessors — chỉ tồn tại khi build với BUILD_TESTING=ON
+    // (target `cay_test`). Release binary KHÔNG chứa các symbol này.
+    //
+    // Mục đích: cho phép property-based tests truy cập các quan sát nội bộ
+    // (private const helpers, internal _text buffer) mà không phá vỡ
+    // encapsulation của release API.
+    // -----------------------------------------------------------------------
+    bool DebugShouldBypassWord() const { return ShouldBypassWord(); }
+
+    // Cho phép test set _text trực tiếp để cô lập FindTonePosition khỏi
+    // chuỗi keystroke (Property 9). Truncate nếu len > MAX_BUFFER - 1.
+    void DebugSetText(const wchar_t* s, int len);
+
+    // Wrapper test-only cho FindTonePosition (private const).
+    int  DebugFindTonePosition() const { return FindTonePosition(); }
+
+    // Đọc nội dung _text[] hiện tại (read-only). Không null-terminate buffer
+    // được trả về — caller phải dùng kèm DebugTextLen().
+    const wchar_t* DebugText()    const { return _text; }
+    int            DebugTextLen() const { return _textLen; }
+
+    // Test-only wrappers cho StripAllTones() và ResetState() (private).
+    // Property 11 (test/test_idempotency.cpp) cần gọi trực tiếp 2 reset
+    // operations để kiểm tra idempotency mà không phải mô phỏng qua
+    // chuỗi phím (Space/Backspace có thể gây side-effects khác).
+    void DebugStripAllTones() { StripAllTones(); }
+    void DebugResetState()    { ResetState(); }
+
+    // Snapshot toàn bộ state nội bộ vào DebugState (POD copy).
+    // Dùng cho Property 11 / 12 để so sánh state trước-sau reset operation.
+    DebugState GetDebugState() const;
+#endif
 
 private:
     MyKey _buffer[MAX_BUFFER];
@@ -113,8 +196,18 @@ private:
 
     // Helpers
     static bool IsAlpha(wchar_t ch);
-    static wchar_t ToLowerViet(wchar_t c);
-    static wchar_t ToUpperViet(wchar_t c);
 };
+
+#ifdef CAY_TEST_BUILD
+// ---------------------------------------------------------------------------
+// Test-only accessor cho file-scope helper `IsCompleteSyllable` định nghĩa
+// trong `CayEngine.cpp`. Release build giữ nguyên `static` linkage để compiler
+// inline + strip; test build (`CAY_TEST_BUILD`) bỏ `static` để Property 13
+// (`test/test_syllable_round_trip.cpp`) có thể gọi trực tiếp.
+//
+// Validates: Requirements 17.2, 17.3, 17.4
+// ---------------------------------------------------------------------------
+bool IsCompleteSyllable(const wchar_t* s, int len);
+#endif
 
 } // namespace Cay

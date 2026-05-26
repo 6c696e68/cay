@@ -1,5 +1,15 @@
 #include "CayEngine.h"
 
+// ---------------------------------------------------------------------------
+// Compile-time guard: khoá `MAX_BUFFER` ở 64 để ngăn hồi quy đa nền tảng
+// (Requirement 5.1, 5.2, 5.3). Nếu ai đó vô tình đổi giá trị trong CayTypes.h
+// hoặc redefine bằng `#define`, build sẽ fail ngay tại compile-time thay vì
+// gây silent truncation ở MacInputInjector / Windows InputInjector / Fcitx5.
+// Tham chiếu: tasks.md task 6.5 — "Verify Phase 5 — build all 3 platform pass".
+// ---------------------------------------------------------------------------
+static_assert(Cay::MAX_BUFFER == 64,
+              "Cay::MAX_BUFFER must remain 64 — see tasks.md task 6.5");
+
 // ============================================================================
 // CayEngine.cpp  –  Free-style Telex state machine (RULE 3)
 //
@@ -28,29 +38,29 @@ bool TelexEngine::IsAlpha(wchar_t ch) {
     return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z');
 }
 
-wchar_t TelexEngine::ToLowerViet(wchar_t c) {
-    if (c >= L'A' && c <= L'Z') return c + 32;
-    if (c >= 0x00C0 && c <= 0x00DD && c != 0x00D7) return c + 0x20; // Latin-1
-    if (c == 0x01AF) return 0x01B0; // Ư -> ư
-    if (c >= 0x0102 && c <= 0x01A0 && (c % 2 == 0)) return c + 1;   // Ă, Đ, Ĩ, Ũ, Ơ
-    if (c >= 0x1EA0 && c <= 0x1EF8 && (c % 2 == 0)) return c + 1;   // Ạ..Ỹ (Latin Extended Additional)
-    return c;
-}
-
-wchar_t TelexEngine::ToUpperViet(wchar_t c) {
-    if (c >= L'a' && c <= L'z') return c - 32;
-    if (c >= 0x00E0 && c <= 0x00FD && c != 0x00F7) return c - 0x20;
-    if (c == 0x01B0) return 0x01AF; // ư -> Ư
-    if (c >= 0x0103 && c <= 0x01A1 && (c % 2 != 0)) return c - 1;
-    if (c >= 0x1EA1 && c <= 0x1EF9 && (c % 2 != 0)) return c - 1;
-    return c;
-}
-
 // ---------------------------------------------------------------------------
 // Constructor - Hàm khởi tạo
+//
+// Zero-init TẤT CẢ field nội bộ — bao gồm cả region saved-state
+// (`_savedBuffer/_savedBufferCount/_savedText/_savedTextLen/_savedToneIndex`)
+// và phần đuôi của `_lastOutput[1..MAX_BUFFER-1]` mà `ResetState()` không
+// chạm tới (`ResetState` chỉ set `_lastOutput[0]=0` làm null-terminator).
+// Property 12 (test/test_idempotency.cpp) yêu cầu engine vừa khởi tạo phải
+// có toàn bộ field nội bộ ở giá trị xác định để `ResetFull()` có thể tương
+// đương fresh construction (Requirement 10.3). Stack garbage ở bất kỳ
+// field nào sẽ làm hai engine fresh khác nhau.
 // ---------------------------------------------------------------------------
 TelexEngine::TelexEngine() {
     _canRestore = false;
+    _savedBufferCount = 0;
+    _savedTextLen     = 0;
+    _savedToneIndex   = -1;
+    for (int i = 0; i < MAX_BUFFER; i++) {
+        _savedBuffer[i].raw    = 0;
+        _savedBuffer[i].output = 0;
+        _savedText[i]          = 0;
+        _lastOutput[i]         = 0;
+    }
     ResetState();
 }
 
@@ -72,10 +82,25 @@ void TelexEngine::ResetState() {
 
 // ---------------------------------------------------------------------------
 // ResetFull – discard buffer và invalidate recall state.
+//
+// Khác với `ResetState()` (chỉ clear active state, được dùng bởi
+// `CommitWord()` để PRESERVE saved-state cho recall), `ResetFull()` clear
+// CẢ saved-state region và phần đuôi `_lastOutput[1..MAX_BUFFER-1]` mà
+// `ResetState()` không chạm tới — để engine trở về trạng thái tương đương
+// fresh-construction (Requirement 10.3, Property 12).
 // ---------------------------------------------------------------------------
 void TelexEngine::ResetFull() {
     ResetState();
-    _canRestore = false;
+    _canRestore       = false;
+    _savedBufferCount = 0;
+    _savedTextLen     = 0;
+    _savedToneIndex   = -1;
+    for (int i = 0; i < MAX_BUFFER; i++) {
+        _savedBuffer[i].raw    = 0;
+        _savedBuffer[i].output = 0;
+        _savedText[i]          = 0;
+        _lastOutput[i]         = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +132,7 @@ void TelexEngine::CommitWord() {
 // Dùng chung cho OnKeyDown chính và Backspace replay.
 // ---------------------------------------------------------------------------
 void TelexEngine::ReplayKey(wchar_t ch) {
-    wchar_t lo = ToLowerViet(ch);
+    wchar_t lo = CayData::ToLowerViet(ch);
 
     _buffer[_bufferCount].raw    = ch;
     _buffer[_bufferCount].output = ch;
@@ -208,163 +233,81 @@ void TelexEngine::FallbackToRaw() {
 }
 
 // ---------------------------------------------------------------------------
-// LEVEL 2: Validator cấu trúc — Kiểm tra âm tiết bằng cách walk pointer
+// LEVEL 2: Validator cấu trúc — Kiểm tra âm tiết bằng `CayData::TryMatch*`.
+//
+// Các bảng âm tiết (initials/nuclei/finals/tails) đã được single-source-of-truth
+// hoá tại `CayData.cpp` (Requirement 2). Hàm này chỉ giữ logic đặc tả tiếng Việt:
+//   - Special case "gi" rollback: nếu sau "gi" không phải nguyên âm thì 'i' là
+//     nucleus (vd. "gì", "gìn").
+//   - Nucleus-Final Pairing Rule: nh/ch chỉ đi với a/i/ê/y/oa/uy/uê;
+//     ng/c không đi với i/ê/y.
 // ---------------------------------------------------------------------------
+#ifdef CAY_TEST_BUILD
+bool IsCompleteSyllable(const wchar_t* s, int len) {
+#else
 static bool IsCompleteSyllable(const wchar_t* s, int len) {
-    if (len == 0 || len > 20) return false;
+#endif
+    if (len <= 0 || len > 20) return false;
 
-    // Bảng phụ âm đầu, sắp xếp: dài trước để tránh match ngắn hơn (đã có tiếng Việt)
-    static const wchar_t* s_initials[] = {
-        L"ngh", L"gh", L"gi", L"ng", L"nh", L"ph",
-        L"qu", L"th", L"tr", L"ch", L"kh", L"\u0111", // đ
-        L"b", L"c", L"d", L"g", L"h", L"k",
-        L"l", L"m", L"n", L"p", L"r", L"s",
-        L"t", L"v", L"x",
-        L"" // empty string = không có phụ âm đầu
-    };
+    int pos = 0;
 
-    // Bảng nhân nguyên âm hợp lệ, dài trước (đã có tiếng Việt)
-    static const wchar_t* s_nuclei[] = {
-        // 3 nguyên âm
-        L"i\u00eau", L"y\u00eau", L"\u01b0\u01a1u", L"u\u00f4i", L"\u01b0\u01a1i", L"oai", L"oay",
-        L"uya", L"uy\u00ea", L"ieu", L"yeu", L"uoi", L"uou", L"oao", L"oeo", L"uyu", L"uye",
-        // 2 nguyên âm
-        L"ai", L"ao", L"au", L"ay",
-        L"\u00e2u", L"\u00e2y",
-        L"eo", L"\u00eau",
-        L"ia", L"i\u00ea", L"ie",
-        L"iu",
-        L"oa", L"oai", L"o\u0103", L"oe", L"oi", L"oo",
-        L"\u00f4i",
-        L"\u01a1i",
-        L"ua", L"u\u00e2", L"u\u00ea", L"ui", L"u\u00f4", L"uy", L"uo", L"ue",
-        L"\u01b0a", L"\u01b0i", L"\u01b0u", L"\u01b0\u01a1",
-        L"ya", L"y\u00ea", L"ye",
-        // 1 nguyên âm
-        L"a", L"\u0103", L"\u00e2",
-        L"e", L"\u00ea",
-        L"i",
-        L"o", L"\u00f4", L"\u01a1",
-        L"u", L"\u01b0",
-        L"y",
-    };
+    // ── BLOCK 1: Phụ âm đầu (có thể rỗng) ───────────────────────────────
+    int initialLen = CayData::TryMatchInitial(s + pos, len - pos);
+    pos += initialLen;
 
-    // Bảng phụ âm cuối hợp lệ, dài trước (đã có tiếng Việt)
-    static const wchar_t* s_finals[] = {
-        L"ng", L"nh", L"ch",
-        L"c", L"m", L"n", L"p", L"t",
-        L""  // không có phụ âm cuối
-    };
-
-    // Bảng vần phụ (tail) (đã có tiếng Việt)
-    static const wchar_t* s_tails[] = {
-        L"i", L"y", L"o", L"u",
-        L""
-    };
-
-    const wchar_t* pos = s;
-    const wchar_t* end = s + len;
-
-    auto matchStr = [&](const wchar_t* pattern, int plen) -> bool {
-        if (pos + plen > end) return false;
-        for (int i = 0; i < plen; i++) {
-            if (pos[i] != pattern[i]) return false;
-        }
-        return true;
-    };
-
-    // ── BLOCK 1: Khớp phụ âm đầu ────────────────────────────── (đã có tiếng Việt)
-    const wchar_t* matchedInitial = nullptr;
-    for (int i = 0; i < (int)(sizeof(s_initials)/sizeof(s_initials[0])); i++) {
-        int ilen = CayStrLen(s_initials[i]);
-        if (ilen == 0) { matchedInitial = L""; break; }
-        if (matchStr(s_initials[i], ilen)) {
-            pos += ilen;
-            matchedInitial = s_initials[i];
-            break;
+    // Special case "gi" rollback: nếu sau "gi" không phải nguyên âm thì
+    // 'i' là nucleus (vd. "gì" → initial="g", nucleus="i").
+    if (initialLen == 2 && s[0] == L'g' && s[1] == L'i') {
+        if (pos == len || !CayData::IsVowel(CayData::StripTone(s[pos]))) {
+            pos--; // rollback: 'i' chuyển thành nucleus
         }
     }
 
-    // Special case cho "gi": nếu phần còn lại KHÔNG bắt đầu bằng nguyên âm
-    // (ví dụ "gì", "gìn", "gíp"), có nghĩa là 'i' thực sự là nhân nguyên âm.
-    if (matchedInitial && matchedInitial[0] == L'g' && matchedInitial[1] == L'i' && matchedInitial[2] == L'\0') {
-        if (pos == end || !CayData::IsVowel(CayData::StripTone(*pos))) {
-            pos--; // Roll back 1 character để 'i' trở thành nhân nguyên âm
-        }
-    }
-    if (!matchedInitial) return false;
+    // ── BLOCK 2: Nhân nguyên âm (bắt buộc) ─────────────────────────────
+    int nucleusLen = CayData::TryMatchNucleus(s + pos, len - pos);
+    if (nucleusLen == 0) return false;
+    const wchar_t* nucleusPtr = s + pos;
+    pos += nucleusLen;
 
-    // ── BLOCK 2: Khớp nhân nguyên âm (bắt buộc) ─────────────── (đã có tiếng Việt)
-    const wchar_t* matchedNucleus = nullptr;
-    for (int i = 0; i < (int)(sizeof(s_nuclei)/sizeof(s_nuclei[0])); i++) {
-        int nlen = CayStrLen(s_nuclei[i]);
-        if (matchStr(s_nuclei[i], nlen)) {
-            pos += nlen;
-            matchedNucleus = s_nuclei[i];
-            break;
-        }
-    }
-    if (!matchedNucleus) return false;
-
-    // ── BLOCK 3: Khớp phụ âm cuối (tùy chọn) ───────────────── (đã có tiếng Việt)
-    const wchar_t* matchedFinal = nullptr;
-    for (int i = 0; i < (int)(sizeof(s_finals)/sizeof(s_finals[0])); i++) {
-        int flen = CayStrLen(s_finals[i]);
-        if (flen == 0) {
-            matchedFinal = L""; 
-            break;
-        }
-        if (matchStr(s_finals[i], flen)) {
-            pos += flen;
-            matchedFinal = s_finals[i];
-            break;
-        }
-    }
-
-    // ── CẢI TIẾN 2: LOGIC NUCLEUS + FINAL (Nucleus-Final Pairing Rule) ──
-    if (matchedNucleus && matchedFinal && matchedFinal[0] != L'\0') {
-        auto isStrEqual = [](const wchar_t* s1, const wchar_t* s2) {
-            while (*s1 && *s2) {
-                if (*s1 != *s2) return false;
-                s1++; s2++;
+    // ── BLOCK 3: Phụ âm cuối (tuỳ chọn) + Nucleus-Final Pairing Rule ──
+    int finalLen = CayData::TryMatchFinal(s + pos, len - pos);
+    if (finalLen > 0) {
+        // So nucleus slice (length `nucleusLen` tại `nucleusPtr`) với literal.
+        auto nucEq = [&](const wchar_t* lit) -> bool {
+            int litLen = 0;
+            while (lit[litLen]) litLen++;
+            if (litLen != nucleusLen) return false;
+            for (int i = 0; i < litLen; i++) {
+                if (nucleusPtr[i] != lit[i]) return false;
             }
-            return (*s1 == *s2);
+            return true;
         };
 
-        // Quy tắc 1: nh, ch CHỈ đi với a, i, ê, y, oa, uy, uê
-        if (isStrEqual(matchedFinal, L"nh") || isStrEqual(matchedFinal, L"ch")) {
-            bool valid = isStrEqual(matchedNucleus, L"a") ||
-                         isStrEqual(matchedNucleus, L"i") ||
-                         isStrEqual(matchedNucleus, L"\u00ea") || // ê
-                         isStrEqual(matchedNucleus, L"y") ||
-                         isStrEqual(matchedNucleus, L"oa") ||
-                         isStrEqual(matchedNucleus, L"uy") ||
-                         isStrEqual(matchedNucleus, L"u\u00ea");  // uê
+        // Quy tắc 1: nh, ch CHỈ đi với a, i, ê, y, oa, uy, uê.
+        bool finalIsNhCh = (finalLen == 2 && s[pos] == L'c' && s[pos + 1] == L'h')
+                        || (finalLen == 2 && s[pos] == L'n' && s[pos + 1] == L'h');
+        if (finalIsNhCh) {
+            bool valid = nucEq(L"a") || nucEq(L"i") || nucEq(L"\u00ea") || nucEq(L"y")
+                      || nucEq(L"oa") || nucEq(L"uy") || nucEq(L"u\u00ea");
             if (!valid) return false;
         }
 
-        // Quy tắc 2: ng, c KHÔNG đi với i, ê, y (không có ing, ic, êng, êc)
-        // Lưu ý: iê, yê, uô, ươ đi với ng/c bình thường
-        if (isStrEqual(matchedFinal, L"ng") || isStrEqual(matchedFinal, L"c")) {
-            bool invalid = isStrEqual(matchedNucleus, L"i") ||
-                           isStrEqual(matchedNucleus, L"\u00ea") || // ê
-                           isStrEqual(matchedNucleus, L"y");
+        // Quy tắc 2: ng, c KHÔNG đi với i, ê, y (lưu ý iê/yê/uô/ươ vẫn hợp lệ
+        // vì chúng được match như nucleus 2-3 ký tự, không phải "i"/"ê"/"y").
+        bool finalIsNgC = (finalLen == 2 && s[pos] == L'n' && s[pos + 1] == L'g')
+                       || (finalLen == 1 && s[pos] == L'c');
+        if (finalIsNgC) {
+            bool invalid = nucEq(L"i") || nucEq(L"\u00ea") || nucEq(L"y");
             if (invalid) return false;
         }
+
+        pos += finalLen;
     }
 
-    // ── BLOCK 4: Khớp tail (tùy chọn) ──────────────────────── (đã có tiếng Việt)
-    for (int i = 0; i < (int)(sizeof(s_tails)/sizeof(s_tails[0])); i++) {
-        int tlen = CayStrLen(s_tails[i]);
-        if (tlen == 0) break;
-        if (matchStr(s_tails[i], tlen)) {
-            pos += tlen;
-            break;
-        }
-    }
+    // ── BLOCK 4: Vần phụ (tuỳ chọn) ───────────────────────────────────
+    pos += CayData::TryMatchTail(s + pos, len - pos);
 
-    // ── KIỂM TRA KẾT THÚC ── (đã có tiếng Việt)
-    return (pos == end);
+    return pos == len;
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +323,7 @@ bool TelexEngine::ShouldBypassWord() const {
     wchar_t raw[16] = {0};
     int len = _bufferCount < 15 ? _bufferCount : 15;
     for(int i = 0; i < len; i++) {
-        raw[i] = ToLowerViet(_buffer[i].raw);
+        raw[i] = CayData::ToLowerViet(_buffer[i].raw);
     }
 
     // ── CẢI TIẾN 1: Strict Tone-Final Consonant Rule ──
@@ -388,7 +331,7 @@ bool TelexEngine::ShouldBypassWord() const {
     if (_textLen >= 1) {
         wchar_t textLo[MAX_BUFFER];
         for (int i = 0; i < _textLen; i++) {
-            textLo[i] = ToLowerViet(CayData::StripTone(_text[i]));
+            textLo[i] = CayData::ToLowerViet(CayData::StripTone(_text[i]));
         }
         textLo[_textLen] = L'\0';
 
@@ -421,14 +364,14 @@ bool TelexEngine::ShouldBypassWord() const {
     if (raw[0] == L'w' || raw[0] == L'f' || raw[0] == L'j' || raw[0] == L'z') return true;
 
     if (len >= 2) {
-        // Lu?t Q: B?t bu?c di v?i u
+        // Luật Q: Bắt buộc đi với u
         if (raw[0] == L'q' && raw[1] != L'u') return true;
-        
-        // Lu?t P: B?t bu?c di v?i h (B? qua c�c t? mu?n nhu pin, pa-t� d? t?i uu g� public, padding)
+
+        // Luật P: Bắt buộc đi với h (bỏ qua các từ mượn như pin, paté, public, padding,...)
         if (raw[0] == L'p' && raw[1] != L'h') return true;
 
-        // Lu?t Ph? �m k�p: Ti?ng Vi?t ch? c� 8 c?p ph? �m k�p h?p l? ? d?u t?.
-        // Helper: Ki?m tra xem k� t? c� ph?i l� ph? �m ASCII kh�ng
+        // Luật Phụ âm kép: Tiếng Việt chỉ có 8 cặp phụ âm kép hợp lệ ở đầu từ.
+        // Helper: Kiểm tra xem ký tự có phải là phụ âm ASCII không
         auto isConsonant = [](wchar_t c) {
             return (c >= L'a' && c <= L'z') && 
                    (c != L'a' && c != L'e' && c != L'i' && c != L'o' && c != L'u' && c != L'y');
@@ -442,9 +385,9 @@ bool TelexEngine::ShouldBypassWord() const {
                 (raw[0] == L'n' && (raw[1] == L'g' || raw[1] == L'h')) ||
                 (raw[0] == L'p' && raw[1] == L'h') ||
                 (raw[0] == L't' && (raw[1] == L'h' || raw[1] == L'r')) ||
-                (raw[0] == L'd' && raw[1] == L'd'); // <--- B? SUNG NGO?I L? CHO CH? "�" T?I ��Y
+                (raw[0] == L'd' && raw[1] == L'd'); // <--- BỔ SUNG NGOẠI LỆ CHO CHỮ "đ" TẠI ĐÂY
             
-            // N?u l� 2 ph? �m d?ng d?u nhung kh�ng n?m trong danh s�ch tr�n -> 100% English (vd: class, style, block)
+            // Nếu là 2 phụ âm đứng đầu nhưng không nằm trong danh sách trên -> 100% English (vd: class, style, block)
             if (!validVietCluster) return true;
         }
         if (raw[0] == L'c' && (raw[1] == L'i' || raw[1] == L'e' || raw[1] == L'\u00EA' || raw[1] == L'y')) return true;
@@ -470,7 +413,7 @@ bool TelexEngine::ShouldBypassWord() const {
     if (hasVowel) {
         wchar_t textLo[MAX_BUFFER];
         for (int i = 0; i < _textLen; i++) {
-            textLo[i] = ToLowerViet(CayData::StripTone(_text[i]));
+            textLo[i] = CayData::ToLowerViet(CayData::StripTone(_text[i]));
         }
         textLo[_textLen] = L'\0';
         
@@ -513,7 +456,7 @@ int TelexEngine::FindTonePosition() const {
 
     // Helper: get plain ASCII base of a potentially toned/hooked vowel.
     auto baseVowel = [](wchar_t c) -> wchar_t {
-        return ToLowerViet(CayData::StripAccent(CayData::StripTone(c)));
+        return CayData::ToLowerViet(CayData::StripAccent(CayData::StripTone(c)));
     };
 
     if (count == 2) {
@@ -530,9 +473,9 @@ int TelexEngine::FindTonePosition() const {
         if (v1 == L'i' && v2 == L'e') return last;
 
         // qu + vowel (e.g. quá)
-        if (v1 == L'u' && first > 0 && ToLowerViet(_text[first - 1]) == L'q') return last;
+        if (v1 == L'u' && first > 0 && CayData::ToLowerViet(_text[first - 1]) == L'q') return last;
         // gi + vowel (e.g. già)
-        if (v1 == L'i' && first > 0 && ToLowerViet(_text[first - 1]) == L'g') return last;
+        if (v1 == L'i' && first > 0 && CayData::ToLowerViet(_text[first - 1]) == L'g') return last;
 
         // Default for open 2-vowel syllable: first vowel (e.g. rồi, mèo, đôi, bơi, múa)
         return first;
@@ -569,71 +512,59 @@ void TelexEngine::StripAllTones() {
 }
 
 bool TelexEngine::ApplyDoubleKeys(wchar_t key) {
-    wchar_t loKey = ToLowerViet(key);
+    wchar_t loKey = CayData::ToLowerViet(key);
     if (loKey != L'a' && loKey != L'e' && loKey != L'o' && loKey != L'd') return false;
 
+    // Backward-scan: tìm nguyên âm gần nhất ở cuối _text có thể nhận double-key.
+    // Quy tắc Telex Tell-Don't-Ask: chỉ ký tự đầu tiên match (undo hoặc apply)
+    // mới được transform; gặp phụ âm thường (không phải d/đ) thì dừng scan.
     for (int j = _textLen - 1; j >= 0; j--) {
-        wchar_t target = _text[j];
-        wchar_t baseTarget = CayData::StripTone(target);
-        wchar_t loBase = ToLowerViet(baseTarget);
-        bool isUpper = (ToLowerViet(target) != target) || (target >= L'A' && target <= L'Z');
+        auto d = CayData::DecomposeChar(_text[j]);
 
-        int tone = 0;
-        for (int t = 1; t <= 5; t++) {
-            if (CayData::GetToneMark(baseTarget, t) == target || CayData::GetToneMark(ToLowerViet(baseTarget), t) == ToLowerViet(target)) {
-                tone = t; break;
-            }
-        }
-
-        // 1. Undo logic
-        if (loKey == L'a' && (loBase == L'\u00e2' || loBase == L'\u0103')) {
-            wchar_t newBase = isUpper ? L'A' : L'a';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
+        // 1. Undo logic — gõ lại double-key trên nguyên âm ĐÃ có dấu mũ/stroke
+        //    → trả về nguyên âm thuần và append `key` raw vào cuối.
+        if (loKey == L'a' && (d.base == L'\u00e2' || d.base == L'\u0103')) {
+            _text[j] = CayData::ComposeChar(L'a', d.toneIndex, d.isUpper);
             if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
- return true;
+            return true;
         }
-        if (loKey == L'e' && loBase == L'\u00ea') {
-            wchar_t newBase = isUpper ? L'E' : L'e';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
+        if (loKey == L'e' && d.base == L'\u00ea') {
+            _text[j] = CayData::ComposeChar(L'e', d.toneIndex, d.isUpper);
             if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
- return true;
+            return true;
         }
-        if (loKey == L'o' && (loBase == L'\u00f4' || loBase == L'\u01a1')) {
-            wchar_t newBase = isUpper ? L'O' : L'o';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
+        if (loKey == L'o' && (d.base == L'\u00f4' || d.base == L'\u01a1')) {
+            _text[j] = CayData::ComposeChar(L'o', d.toneIndex, d.isUpper);
             if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
- return true;
+            return true;
         }
-        if (loKey == L'd' && loBase == L'\u0111') {
-            wchar_t newBase = isUpper ? L'D' : L'd';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
+        if (loKey == L'd' && d.base == L'\u0111') {
+            _text[j] = CayData::ComposeChar(L'd', d.toneIndex, d.isUpper);
             if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
- return true;
+            return true;
         }
 
-        // 2. Apply logic
-        if (loKey == L'a' && loBase == L'a') {
-            wchar_t newBase = isUpper ? L'\u00C2' : L'\u00E2';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
- return true;
+        // 2. Apply logic — gõ double-key trên nguyên âm thuần → thêm dấu mũ/stroke,
+        //    giữ nguyên dấu thanh và case hiện tại.
+        if (loKey == L'a' && d.base == L'a') {
+            _text[j] = CayData::ComposeChar(L'\u00E2', d.toneIndex, d.isUpper);
+            return true;
         }
-        if (loKey == L'e' && loBase == L'e') {
-            wchar_t newBase = isUpper ? L'\u00CA' : L'\u00EA';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
- return true;
+        if (loKey == L'e' && d.base == L'e') {
+            _text[j] = CayData::ComposeChar(L'\u00EA', d.toneIndex, d.isUpper);
+            return true;
         }
-        if (loKey == L'o' && loBase == L'o') {
-            wchar_t newBase = isUpper ? L'\u00D4' : L'\u00F4';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
- return true;
+        if (loKey == L'o' && d.base == L'o') {
+            _text[j] = CayData::ComposeChar(L'\u00F4', d.toneIndex, d.isUpper);
+            return true;
         }
-        if (loKey == L'd' && loBase == L'd') {
-            wchar_t newBase = isUpper ? L'\u0110' : L'\u0111';
-            _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
- return true;
+        if (loKey == L'd' && d.base == L'd') {
+            _text[j] = CayData::ComposeChar(L'\u0111', d.toneIndex, d.isUpper);
+            return true;
         }
-        
-        if (!CayData::IsVowel(loBase) && loBase != L'd' && loBase != L'\u0111') {
+
+        // Dừng scan khi gặp phụ âm thường (không phải d/đ — d/đ vẫn là target hợp lệ).
+        if (!CayData::IsVowel(d.base) && d.base != L'd' && d.base != L'\u0111') {
             break;
         }
     }
@@ -641,128 +572,103 @@ bool TelexEngine::ApplyDoubleKeys(wchar_t key) {
 }
 
 bool TelexEngine::ApplyHookKeys(wchar_t key) {
-    if (ToLowerViet(key) != L'w') return false;
+    if (CayData::ToLowerViet(key) != L'w') return false;
 
+    // Backward-scan: tìm nguyên âm gần nhất ở cuối _text có thể nhận hook.
+    // Quy tắc Telex Tell-Don't-Ask: dùng DecomposeChar để bóc (base, tone, isUpper)
+    // O(1) thay cho pattern quét tone qua vòng lặp t=1..5 GetToneMark.
     for (int j = _textLen - 1; j >= 0; j--) {
-        wchar_t target = _text[j];
-        wchar_t baseTarget = CayData::StripTone(target);
-        wchar_t loBase = ToLowerViet(baseTarget);
-        bool isUpper = (ToLowerViet(target) != target) || (target >= L'A' && target <= L'Z');
+        auto d = CayData::DecomposeChar(_text[j]);
 
-        int tone = 0;
-        for (int t = 1; t <= 5; t++) {
-            if (CayData::GetToneMark(baseTarget, t) == target || CayData::GetToneMark(ToLowerViet(baseTarget), t) == ToLowerViet(target)) {
-                tone = t; break;
-            }
-        }
-
-        // 1. Undo logic
-        if (loBase == L'\u0103' || loBase == L'\u01a1' || loBase == L'\u01b0') {
-            if (loBase == L'\u01a1' && j > 0 && ToLowerViet(CayData::StripTone(_text[j-1])) == L'\u01b0') {
-                wchar_t prevBase = CayData::StripTone(_text[j-1]);
-                bool prevUpper = (ToLowerViet(prevBase) != prevBase) || (prevBase >= L'A' && prevBase <= L'Z');
-                int prevTone = 0;
-                for (int t = 1; t <= 5; t++) {
-                    if (CayData::GetToneMark(prevBase, t) == _text[j-1] || CayData::GetToneMark(ToLowerViet(prevBase), t) == ToLowerViet(_text[j-1])) {
-                        prevTone = t; break;
-                    }
-                }
-                wchar_t newPrevBase = prevUpper ? L'U' : L'u';
-                wchar_t newCurrBase = isUpper ? L'O' : L'o';
-                _text[j-1] = prevTone ? CayData::GetToneMark(newPrevBase, prevTone) : newPrevBase;
-                _text[j]   = tone ? CayData::GetToneMark(newCurrBase, tone) : newCurrBase;
-            } else {
-                wchar_t newBase = (loBase == L'\u0103') ? (isUpper ? L'A' : L'a') :
-                                  (loBase == L'\u01a1') ? (isUpper ? L'O' : L'o') : (isUpper ? L'U' : L'u');
-                _text[j] = tone ? CayData::GetToneMark(newBase, tone) : newBase;
-            }
-            if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
- return true;
-        }
-        if (loBase == L'u' && j > 0 && ToLowerViet(CayData::StripTone(_text[j-1])) == L'\u01b0') {
-            wchar_t prevBase = CayData::StripTone(_text[j-1]);
-            bool prevUpper = (ToLowerViet(prevBase) != prevBase) || (prevBase >= L'A' && prevBase <= L'Z');
-            int prevTone = 0;
-            for (int t = 1; t <= 5; t++) {
-                if (CayData::GetToneMark(prevBase, t) == _text[j-1] || CayData::GetToneMark(ToLowerViet(prevBase), t) == ToLowerViet(_text[j-1])) {
-                    prevTone = t; break;
+        // 1. Undo logic — gõ lại 'w' trên nguyên âm ĐÃ có hook (ă/ơ/ư)
+        //    → bỏ hook và append `key` raw vào cuối.
+        if (d.base == L'\u0103' || d.base == L'\u01a1' || d.base == L'\u01b0') {
+            // Special case: nếu là 'ơ' và trước đó là 'ư' → undo cụm "ươ" thành "uo".
+            if (d.base == L'\u01a1' && j > 0) {
+                auto p = CayData::DecomposeChar(_text[j-1]);
+                if (p.base == L'\u01b0') {
+                    _text[j-1] = CayData::ComposeChar(L'u', p.toneIndex, p.isUpper);
+                    _text[j]   = CayData::ComposeChar(L'o', d.toneIndex, d.isUpper);
+                    if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
+                    return true;
                 }
             }
-            wchar_t newPrevBase = prevUpper ? L'U' : L'u';
-            _text[j-1] = prevTone ? CayData::GetToneMark(newPrevBase, prevTone) : newPrevBase;
+            // Standard undo: ă→a, ơ→o, ư→u (giữ nguyên dấu thanh và case).
+            wchar_t newBase = (d.base == L'\u0103') ? L'a'
+                            : (d.base == L'\u01a1') ? L'o'
+                                                    : L'u';
+            _text[j] = CayData::ComposeChar(newBase, d.toneIndex, d.isUpper);
             if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
             return true;
+        }
+
+        // Undo "ưu": gặp 'u' theo sau 'ư' → undo prev ư→u, append `key` raw.
+        if (d.base == L'u' && j > 0) {
+            auto p = CayData::DecomposeChar(_text[j-1]);
+            if (p.base == L'\u01b0') {
+                _text[j-1] = CayData::ComposeChar(L'u', p.toneIndex, p.isUpper);
+                if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
+                return true;
+            }
         }
 
         // 2. Apply logic
-        if (loBase == L'o' && j > 0 && ToLowerViet(CayData::StripTone(_text[j-1])) == L'u') {
-            // NẾU LÀ "QUO", BỎ QUA LOGIC BIẾN U->Ư
-            bool isQu = (j >= 2 && ToLowerViet(_text[j-2]) == L'q');
-            if (!isQu) {
-                wchar_t prevBase = CayData::StripTone(_text[j-1]);
-                bool prevUpper = (ToLowerViet(prevBase) != prevBase) || (prevBase >= L'A' && prevBase <= L'Z');
-                int prevTone = 0;
-                for (int t = 1; t <= 5; t++) {
-                    if (CayData::GetToneMark(prevBase, t) == _text[j-1] || CayData::GetToneMark(ToLowerViet(prevBase), t) == ToLowerViet(_text[j-1])) {
-                        prevTone = t; break;
-                    }
+        // 2a. uo → ươ (trừ "quo" — giữ 'u' nguyên trong cụm qu).
+        if (d.base == L'o' && j > 0) {
+            auto p = CayData::DecomposeChar(_text[j-1]);
+            if (p.base == L'u') {
+                bool isQu = (j >= 2 && CayData::ToLowerViet(_text[j-2]) == L'q');
+                if (!isQu) {
+                    _text[j-1] = CayData::ComposeChar(L'\u01b0', p.toneIndex, p.isUpper); // ư
+                    _text[j]   = CayData::ComposeChar(L'\u01a1', d.toneIndex, d.isUpper); // ơ
+                    return true;
                 }
-                wchar_t newPrevBase = prevUpper ? L'\u01AF' : L'\u01b0'; // Ư/ư
-                wchar_t newCurrBase = isUpper ? L'\u01A0' : L'\u01a1'; // Ơ/ơ
-                _text[j-1] = prevTone ? CayData::GetToneMark(newPrevBase, prevTone) : newPrevBase;
-                _text[j]   = tone ? CayData::GetToneMark(newCurrBase, tone) : newCurrBase;
+            }
+        }
+
+        // 2b. ua → ưa (trừ "qua").
+        if (d.base == L'a' && j > 0) {
+            auto p = CayData::DecomposeChar(_text[j-1]);
+            if (p.base == L'u') {
+                bool isQu = (j >= 2 && CayData::ToLowerViet(_text[j-2]) == L'q');
+                if (!isQu) {
+                    _text[j-1] = CayData::ComposeChar(L'\u01b0', p.toneIndex, p.isUpper); // ư
+                    return true;
+                }
+            }
+        }
+
+        // 2c. uu → ưu.
+        if (d.base == L'u' && j > 0) {
+            auto p = CayData::DecomposeChar(_text[j-1]);
+            if (p.base == L'u') {
+                _text[j-1] = CayData::ComposeChar(L'\u01b0', p.toneIndex, p.isUpper); // ư
                 return true;
             }
         }
-        
-        if (loBase == L'a' && j > 0 && ToLowerViet(CayData::StripTone(_text[j-1])) == L'u') {
-            // NẾU LÀ "QUA", BỎ QUA LOGIC BIẾN U->Ư
-            bool isQu = (j >= 2 && ToLowerViet(_text[j-2]) == L'q');
-            if (!isQu) {
-                wchar_t prevBase = CayData::StripTone(_text[j-1]);
-                bool prevUpper = (ToLowerViet(prevBase) != prevBase) || (prevBase >= L'A' && prevBase <= L'Z');
-                int prevTone = 0;
-                for (int t = 1; t <= 5; t++) {
-                    if (CayData::GetToneMark(prevBase, t) == _text[j-1] || CayData::GetToneMark(ToLowerViet(prevBase), t) == ToLowerViet(_text[j-1])) {
-                        prevTone = t; break;
-                    }
-                }
-                wchar_t newPrevBase = prevUpper ? L'\u01AF' : L'\u01b0'; // Ư/ư
-                _text[j-1] = prevTone ? CayData::GetToneMark(newPrevBase, prevTone) : newPrevBase;
-                return true;
-            }
-        }
-        if (loBase == L'u' && j > 0 && ToLowerViet(CayData::StripTone(_text[j-1])) == L'u') {
-            wchar_t prevBase = CayData::StripTone(_text[j-1]);
-            bool prevUpper = (ToLowerViet(prevBase) != prevBase) || (prevBase >= L'A' && prevBase <= L'Z');
-            int prevTone = 0;
-            for (int t = 1; t <= 5; t++) {
-                if (CayData::GetToneMark(prevBase, t) == _text[j-1] || CayData::GetToneMark(ToLowerViet(prevBase), t) == ToLowerViet(_text[j-1])) {
-                    prevTone = t; break;
-                }
-            }
-            wchar_t newPrevBase = prevUpper ? L'\u01AF' : L'\u01b0'; // Ư/ư
-            _text[j-1] = prevTone ? CayData::GetToneMark(newPrevBase, prevTone) : newPrevBase;
-            return true;
-        }
-        
+
         // Cải tiến: Nếu chữ 'u' đứng cuối nhưng trước nó là 1 nguyên âm khác (vd: ou, au, eu, iu)
         // Thì không bao giờ nó nhận hook 'w' để thành 'ư' (trừ trường hợp 'uu' đã bắt ở trên).
-        // Bỏ qua để vòng lặp lùi lại xử lý nguyên âm đứng trước (nhờ đó 'huou' + 'w' -> 'hươu')
-        if (loBase == L'u' && j > 0) {
-            wchar_t prevBase = ToLowerViet(CayData::StripTone(_text[j-1]));
-            if (CayData::IsVowel(prevBase) || prevBase == L'q') {
+        // Bỏ qua để vòng lặp lùi lại xử lý nguyên âm đứng trước (nhờ đó 'huou' + 'w' -> 'hươu').
+        // Ngoại lệ: cụm `gi` là phụ âm đầu (giống `qu`) — `i` đóng vai trò consonant cluster,
+        // 'u' sau `gi` VẪN nhận hook (vd. 'giuw' -> 'giư', đứng đầu chuỗi 'giường').
+        if (d.base == L'u' && j > 0) {
+            auto p = CayData::DecomposeChar(_text[j-1]);
+            bool isGiCluster = (p.base == L'i' && j >= 2
+                                && CayData::ToLowerViet(_text[j-2]) == L'g');
+            if ((CayData::IsVowel(p.base) && !isGiCluster) || p.base == L'q') {
                 continue;
             }
         }
 
-        wchar_t hookRule = CayData::GetHookRule(baseTarget);
+        // 2d. Default hook rule (oo→ô, aw→ă, ow→ơ, uw→ư, â→ă, ...).
+        wchar_t hookRule = CayData::GetHookRule(d.base);
         if (hookRule != L'\0') {
-            _text[j] = tone ? CayData::GetToneMark(hookRule, tone) : hookRule;
- return true;
+            _text[j] = CayData::ComposeChar(hookRule, d.toneIndex, d.isUpper);
+            return true;
         }
-        
-        if (!CayData::IsVowel(loBase)) {
+
+        if (!CayData::IsVowel(d.base)) {
             continue;
         }
     }
@@ -796,19 +702,14 @@ bool TelexEngine::ApplyToneMarks(int toneIndex) {
     int currentTone = 0;
     int tonePos = -1;
 
-    // 1. Identify if the word currently has a tone and where it is
+    // 1. Identify if the word currently has a tone and where it is.
+    //    DecomposeChar trả về (base, toneIndex, isUpper) trong O(1) — thay block
+    //    quét GetToneMark qua vòng lặp t=1..5 (Requirement 4.6/4.7).
     for (int i = 0; i < _textLen; i++) {
-        wchar_t c = _text[i];
-        wchar_t base = CayData::StripTone(c);
-        if (base != c) {
+        auto d = CayData::DecomposeChar(_text[i]);
+        if (d.toneIndex > 0) {
+            currentTone = d.toneIndex;
             tonePos = i;
-            for (int t = 1; t <= 5; t++) {
-                if (CayData::GetToneMark(base, t) == c || 
-                    CayData::GetToneMark(ToLowerViet(base), t) == ToLowerViet(c)) {
-                    currentTone = t;
-                    break;
-                }
-            }
             break;
         }
     }
@@ -816,7 +717,9 @@ bool TelexEngine::ApplyToneMarks(int toneIndex) {
     // 2. Handle 'z' key (toneIndex == 0)
     if (toneIndex == 0) {
         if (currentTone > 0) {
-            _text[tonePos] = CayData::StripTone(_text[tonePos]); // Remove tone
+            // Strip dấu thanh giữ uppercase qua ComposeChar(base, 0, isUpper).
+            auto d = CayData::DecomposeChar(_text[tonePos]);
+            _text[tonePos] = CayData::ComposeChar(d.base, 0, d.isUpper);
             _toneIndex = -1;
 
             return true; // Consumed 'z', do not append it
@@ -826,7 +729,8 @@ bool TelexEngine::ApplyToneMarks(int toneIndex) {
 
     // 3. Handle double-typing the SAME tone key (Undo tone and append raw key)
     if (currentTone == toneIndex) {
-        _text[tonePos] = CayData::StripTone(_text[tonePos]); // Remove tone
+        auto d = CayData::DecomposeChar(_text[tonePos]);
+        _text[tonePos] = CayData::ComposeChar(d.base, 0, d.isUpper);
         _toneIndex = -1;
 
         return false; // Return false so the raw tone key (e.g., 's') gets appended
@@ -836,23 +740,21 @@ bool TelexEngine::ApplyToneMarks(int toneIndex) {
     // Chỉ kích hoạt nếu user bấm dấu thanh (s, f, r, x, j) và không phải là xóa dấu (z)
     if (toneIndex > 0) {
         for (int i = 0; i < _textLen - 1; i++) {
-            wchar_t v1 = ToLowerViet(CayData::StripTone(_text[i]));
-            wchar_t v2 = ToLowerViet(CayData::StripTone(_text[i+1]));
-            
-            // Nếu phát hiện cặp "uo" đi liền nhau
-            if (v1 == L'u' && v2 == L'o') {
+            auto d1 = CayData::DecomposeChar(_text[i]);
+            auto d2 = CayData::DecomposeChar(_text[i+1]);
+
+            // Nếu phát hiện cặp "uo" đi liền nhau (đã strip tone qua DecomposeChar.base)
+            if (d1.base == L'u' && d2.base == L'o') {
                 // Ngoại lệ: Nếu trước 'u' là 'q' (vd: "quốc"), thì KHÔNG được móc thành "qước"
-                bool isQu = (i > 0 && ToLowerViet(_text[i-1]) == L'q');
+                bool isQu = (i > 0 && CayData::ToLowerViet(_text[i-1]) == L'q');
                 if (!isQu) {
-                    bool isUpper1 = (_text[i] == ToUpperViet(_text[i]) && _text[i] != ToLowerViet(_text[i]));
-                    bool isUpper2 = (_text[i+1] == ToUpperViet(_text[i+1]) && _text[i+1] != ToLowerViet(_text[i+1]));
-                    
-                    // Ép buộc u -> ư và o -> ơ in place
-                    _text[i]   = isUpper1 ? L'\u01AF' : L'\u01B0'; // Ư / ư
-                    _text[i+1] = isUpper2 ? L'\u01A0' : L'\u01a1'; // Ơ / ơ
-                    
+                    // Ép buộc u -> ư và o -> ơ in place; drop tone hiện tại để
+                    // bước 4 đặt lại đúng vị trí (tonePos sẽ được reset).
+                    _text[i]   = CayData::ComposeChar(L'\u01b0', 0, d1.isUpper); // ư / Ư
+                    _text[i+1] = CayData::ComposeChar(L'\u01a1', 0, d2.isUpper); // ơ / Ơ
+
                     // Nếu chữ đã có dấu thanh từ trước, cần reset lại tonePos vì chữ cái gốc đã bị thay đổi
-                    tonePos = -1; 
+                    tonePos = -1;
                 }
                 break;
             }
@@ -863,17 +765,12 @@ bool TelexEngine::ApplyToneMarks(int toneIndex) {
     // 4. Apply or replace tone
     int targetPos = (tonePos >= 0) ? tonePos : FindTonePosition();
     if (targetPos >= 0) {
-        wchar_t originalChar = _text[targetPos];
-        // Kiểm tra xem chữ gốc có phải là chữ IN HOA không
-        bool isUpper = (originalChar == ToUpperViet(originalChar) && originalChar != ToLowerViet(originalChar));
+        auto d = CayData::DecomposeChar(_text[targetPos]);
 
-        wchar_t base = CayData::StripTone(originalChar);
-        wchar_t baseLo = ToLowerViet(base); // Đưa về chữ thường để lấy dấu trong thư viện
-
-        wchar_t tonedLo = CayData::GetToneMark(baseLo, toneIndex);
-        if (tonedLo != L'\0') {
-            // Nâng lên lại IN HOA nếu cần
-            _text[targetPos] = isUpper ? ToUpperViet(tonedLo) : tonedLo;
+        // ComposeChar trả về 0 nếu (base, toneIndex) không có mapping → giữ nguyên hành vi cũ.
+        wchar_t toned = CayData::ComposeChar(d.base, toneIndex, d.isUpper);
+        if (toned != L'\0') {
+            _text[targetPos] = toned;
             _toneIndex = toneIndex;
 
             return true;
@@ -1037,7 +934,7 @@ void TelexEngine::OnKeyDown(Cay::KeyEvent& e) {
                 // Trích xuất chuỗi chữ cái cơ bản (đã lột sạch dấu thanh và dấu mũ)
                 wchar_t textLo[MAX_BUFFER];
                 for (int i = 0; i < _textLen; i++) {
-                    textLo[i] = ToLowerViet(CayData::StripTone(_text[i])); // Giữ lại cấu trúc thuần
+                    textLo[i] = CayData::ToLowerViet(CayData::StripTone(_text[i])); // Giữ lại cấu trúc thuần
                 }
                 textLo[_textLen] = L'\0';
                 
@@ -1073,7 +970,7 @@ void TelexEngine::OnKeyDown(Cay::KeyEvent& e) {
 
     // Determine the actual character pressed (respecting Shift).
     wchar_t ch = e.character;
-    wchar_t lo = ToLowerViet(ch);
+    wchar_t lo = CayData::ToLowerViet(ch);
 
     // -----------------------------------------------------------------------
     // 3. Guard: buffer overflow -> fall through as plain text.
@@ -1108,6 +1005,51 @@ void TelexEngine::OnKeyUp(Cay::KeyEvent& e) {
     // No-op for now.
     (void)e;
 }
+
+#ifdef CAY_TEST_BUILD
+// ---------------------------------------------------------------------------
+// DebugSetText (test-only)
+//
+// Set _text[] trực tiếp từ test code để cô lập các const private method
+// (FindTonePosition, ShouldBypassWord, ...) khỏi chuỗi keystroke.
+// Truncate đến MAX_BUFFER - 1 để dành chỗ null terminator.
+// ---------------------------------------------------------------------------
+void TelexEngine::DebugSetText(const wchar_t* s, int len) {
+    if (len < 0) len = 0;
+    if (len > MAX_BUFFER - 1) len = MAX_BUFFER - 1;
+    for (int i = 0; i < len; i++) _text[i] = s[i];
+    _text[len] = L'\0';
+    _textLen = len;
+}
+
+// ---------------------------------------------------------------------------
+// GetDebugState (test-only)
+//
+// Snapshot toàn bộ private state vào struct DebugState để Property 11 / 12
+// (test/test_idempotency.cpp) so sánh state trước-sau khi gọi reset operation.
+// Copy field-by-field — không dùng memcpy vì layout của TelexEngine không
+// đảm bảo tương đương DebugState (chỉ tương đương ngữ nghĩa).
+// ---------------------------------------------------------------------------
+DebugState TelexEngine::GetDebugState() const {
+    DebugState s{};
+    for (int i = 0; i < MAX_BUFFER; i++) {
+        s.buffer[i]      = _buffer[i];
+        s.text[i]        = _text[i];
+        s.lastOutput[i]  = _lastOutput[i];
+        s.savedBuffer[i] = _savedBuffer[i];
+        s.savedText[i]   = _savedText[i];
+    }
+    s.bufferCount      = _bufferCount;
+    s.textLen          = _textLen;
+    s.toneIndex        = _toneIndex;
+    s.lastOutputLen    = _lastOutputLen;
+    s.savedBufferCount = _savedBufferCount;
+    s.savedTextLen     = _savedTextLen;
+    s.savedToneIndex   = _savedToneIndex;
+    s.canRestore       = _canRestore;
+    return s;
+}
+#endif
 
 } // namespace Cay
 

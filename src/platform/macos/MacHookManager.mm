@@ -130,17 +130,37 @@ CGEventRef EventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef 
     return event;
 }
 
-bool MacHookManager::Initialize() {
-    CGEventMask eventMask = (CGEventMaskBit(kCGEventKeyDown) | 
-                             CGEventMaskBit(kCGEventKeyUp) | 
-                             CGEventMaskBit(kCGEventFlagsChanged) | 
-                             CGEventMaskBit(kCGEventLeftMouseDown) | 
-                             CGEventMaskBit(kCGEventRightMouseDown));
+bool MacHookManager::IsAccessibilityTrusted() {
+    return AXIsProcessTrusted();
+}
 
-    if (!AXIsProcessTrusted()) {
-        NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
-        AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+bool MacHookManager::IsRunning() {
+    return eventTap != NULL;
+}
+
+bool MacHookManager::RequestAccessibilityPrompt() {
+    // Gọi với prompt:NO để app được "đăng ký" vào danh sách Accessibility
+    // nhưng KHÔNG hiện dialog hệ thống (vì Cay đã có dialog tiếng Việt riêng,
+    // 2 dialog đè nhau gây nhiễu user — xem ảnh).
+    NSDictionary *options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @NO};
+    return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+}
+
+bool MacHookManager::Initialize() {
+    if (eventTap != NULL) {
+        return true; // Đã khởi tạo rồi
     }
+
+    // Không có quyền thì không cố tạo tap (sẽ luôn fail)
+    if (!AXIsProcessTrusted()) {
+        return false;
+    }
+
+    CGEventMask eventMask = (CGEventMaskBit(kCGEventKeyDown) |
+                             CGEventMaskBit(kCGEventKeyUp) |
+                             CGEventMaskBit(kCGEventFlagsChanged) |
+                             CGEventMaskBit(kCGEventLeftMouseDown) |
+                             CGEventMaskBit(kCGEventRightMouseDown));
 
     eventTap = CGEventTapCreate(kCGSessionEventTap,
                                 kCGHeadInsertEventTap,

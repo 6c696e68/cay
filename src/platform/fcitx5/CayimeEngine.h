@@ -26,6 +26,10 @@ private:
     bool forcePreedit_ = false;
     fcitx::SimpleAction forcePreeditAction_;
 
+    // Kiểm tra xem IC hiện tại có nên dùng preedit hay không
+    // (tính cả terminal blacklist + forcePreedit)
+    bool shouldUsePreedit(fcitx::InputContext* ic) const;
+
     // Helper to convert fcitx::Key to Cay::KeyEvent
     bool convertKeyEvent(fcitx::KeyEvent& fcitxEvent, Cay::KeyEvent& cayEvent);
 };

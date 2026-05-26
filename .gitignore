@@ -30,3 +30,4 @@ _ReSharper.*
 
 build/
 build-fcitx5/
+.DS_Store

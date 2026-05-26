@@ -1,7 +1,29 @@
 #pragma once
+// ============================================================================
+// CayTypes.h — Kiểu dữ liệu cơ bản & hằng số dùng chung của Engine_Core
+//
+// Nội dung:
+//   - constexpr Cay::MAX_BUFFER = 64    (single source — không redefine)
+//   - enum class KeyCode                (mã phím Unknown / Backspace / A..Z ...)
+//   - struct KeyEvent                   (keyCode + character + handled)
+//   - typedef InjectTextFunc            (callback platform inject text)
+//   - inline helper CayStrLen / CayStrCmp (thay thế CRT wcslen / wcscmp)
+//
+// Ràng buộc:
+//   * No-CRT      — không include <cstring>, <cwchar>, không gọi wcslen/memcpy.
+//   * No-STL      — chỉ <cstdint> cho uint32_t.
+//   * No-alloc    — toàn bộ là POD / constexpr / inline static linkage.
+//   * No-except   — không throw, không try/catch.
+// ============================================================================
 #include <cstdint>
 
 namespace Cay {
+
+    // Kích thước cố định cho buffer phím thô (`_buffer`) và buffer text output
+    // (`_text`) trong `TelexEngine`. Cũng được platform injector dùng để khai
+    // báo array tạm. Single source of truth — KHÔNG khai báo lại bằng `#define`
+    // hoặc literal `64` ở nơi khác.
+    constexpr int MAX_BUFFER = 64;
 
     // Mã phím - enum các phím được hỗ trợ
     enum class KeyCode : uint32_t {

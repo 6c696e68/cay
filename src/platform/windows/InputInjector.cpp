@@ -1,8 +1,28 @@
 #include "InputInjector.h"
+#include "CayTypes.h"
 
-// Số ký tự tối đa trong một từ + ZWJ + backspaces headroom.
-// 1 ZWJ + 64 backspaces + 256 unicode chars = 321 INPUT structs worst case.
-#define MAX_INPUTS 321
+// ---------------------------------------------------------------------------
+// Worst-case sizing cho mảng INPUT của một lần `ReplaceText` duy nhất.
+//
+//   Worst case: 1 dummy pair + (MAX_BUFFER + 1) backspace pairs +
+//               MAX_BUFFER unicode pairs = MAX_BUFFER*4 + 4
+//
+// Phân tách:
+//   • 1 dummy pair        = 2 INPUT  (down + up của ký tự 'a' wake-up caret)
+//   • (MAX_BUFFER + 1)
+//     backspace pairs    = 2 * (MAX_BUFFER + 1) INPUT
+//     (xoá dummy + tối đa MAX_BUFFER ký tự text gốc)
+//   • MAX_BUFFER unicode
+//     pairs              = 2 * MAX_BUFFER INPUT
+//     (chèn lại text mới, không thể dài hơn MAX_BUFFER vì engine cap ở đó)
+//
+// Tổng = 2 + 2*(MAX_BUFFER + 1) + 2*MAX_BUFFER
+//      = 2 + 2*MAX_BUFFER + 2 + 2*MAX_BUFFER
+//      = 4*MAX_BUFFER + 4
+//
+// Với MAX_BUFFER = 64 (xem `Cay::MAX_BUFFER` trong `core/CayTypes.h`)
+// ⇒ kích thước mảng = 260 INPUT structs.
+// ---------------------------------------------------------------------------
 
 namespace CayIME {
 
@@ -42,7 +62,8 @@ static void FillVkInput(INPUT* inp, WORD vk, DWORD flags) {
 void InputInjector::ReplaceText(int backspaceCount, const wchar_t* newText, int newTextLen) {
     if (backspaceCount <= 0 && newTextLen <= 0) return;
 
-    INPUT inputs[256];
+    // Mảng tĩnh có headroom đúng worst case (xem header comment ở trên).
+    INPUT inputs[Cay::MAX_BUFFER * 4 + 4];
     int idx = 0;
 
     // 1. ZWJ DUMMY INJECTION (Chrome/Excel Autocomplete Breaker)
@@ -60,13 +81,13 @@ void InputInjector::ReplaceText(int backspaceCount, const wchar_t* newText, int 
 
     // 2. DELETION (Xóa dummy + các ký tự gốc)
     int totalBs = backspaceCount + (useDummy ? 1 : 0);
-    for (int i = 0; i < totalBs && idx + 1 < 256; i++) {
+    for (int i = 0; i < totalBs && idx + 1 < Cay::MAX_BUFFER * 4 + 4; i++) {
         FillVkInput(&inputs[idx++], VK_BACK, 0);
         FillVkInput(&inputs[idx++], VK_BACK, KEYEVENTF_KEYUP);
     }
 
     // 3. INSERTION (Text mới)
-    for (int i = 0; i < newTextLen && idx + 1 < 256; i++) {
+    for (int i = 0; i < newTextLen && idx + 1 < Cay::MAX_BUFFER * 4 + 4; i++) {
         FillUnicodeInput(&inputs[idx++], newText[i], 0);
         FillUnicodeInput(&inputs[idx++], newText[i], KEYEVENTF_KEYUP);
     }

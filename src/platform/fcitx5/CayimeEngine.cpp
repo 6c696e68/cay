@@ -41,24 +41,7 @@ static void GlobalInjectText(int backspaceCount, const wchar_t* newText, int new
 void CayimeEngine::injectText(int backspaceCount, const wchar_t* newText, int newTextLen) {
     if (!current_ic_) return;
     
-    bool supportsSurrounding = current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
-    
-    // Many Linux terminals claim SurroundingText support but ignore deleteSurroundingText (VTE bugs).
-    // Force fallback for known terminal emulators.
-    if (supportsSurrounding) {
-        std::string prog = current_ic_->program();
-        if (prog.find("terminal") != std::string::npos || 
-            prog.find("alacritty") != std::string::npos ||
-            prog.find("kitty") != std::string::npos ||
-            prog.find("konsole") != std::string::npos ||
-            prog.find("terminator") != std::string::npos ||
-            prog.find("wezterm") != std::string::npos ||
-            prog.find("tmux") != std::string::npos) {
-            supportsSurrounding = false;
-        }
-    }
-    
-    bool usePreedit = forcePreedit_ || !supportsSurrounding;
+    bool usePreedit = shouldUsePreedit(current_ic_);
     
     if (!usePreedit) {
         if (backspaceCount > 0) {
@@ -117,6 +100,29 @@ CayimeEngine::CayimeEngine(fcitx::Instance* instance)
 }
 
 CayimeEngine::~CayimeEngine() {
+}
+
+bool CayimeEngine::shouldUsePreedit(fcitx::InputContext* ic) const {
+    if (forcePreedit_) return true;
+    
+    bool supportsSurrounding = ic->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+    
+    // Many Linux terminals claim SurroundingText support but ignore deleteSurroundingText (VTE bugs).
+    // Force preedit fallback for known terminal emulators.
+    if (supportsSurrounding) {
+        std::string prog = ic->program();
+        if (prog.find("terminal") != std::string::npos || 
+            prog.find("alacritty") != std::string::npos ||
+            prog.find("kitty") != std::string::npos ||
+            prog.find("konsole") != std::string::npos ||
+            prog.find("terminator") != std::string::npos ||
+            prog.find("wezterm") != std::string::npos ||
+            prog.find("tmux") != std::string::npos) {
+            supportsSurrounding = false;
+        }
+    }
+    
+    return !supportsSurrounding;
 }
 
 void CayimeEngine::activate(const fcitx::InputMethodEntry& /*entry*/, fcitx::InputContextEvent& event) {
@@ -191,7 +197,7 @@ void CayimeEngine::keyEvent(const fcitx::InputMethodEntry& /*entry*/, fcitx::Key
                     static_cast<uint32_t>(fcitx::KeyState::Super);
                     
     if (states & mask) {
-        // Toggle Force Preedit on Ctrl+Alt+U
+        // Toggle Force Preedit on Ctrl+Alt+Super+U
         if ((states & mask) == mask && key.sym() == FcitxKey_U) {
             forcePreedit_ = !forcePreedit_;
             forcePreeditAction_.setChecked(forcePreedit_);
@@ -214,7 +220,7 @@ void CayimeEngine::keyEvent(const fcitx::InputMethodEntry& /*entry*/, fcitx::Key
         g_current_engine = this;
         current_ic_ = keyEvent.inputContext();
         
-        bool usePreedit = forcePreedit_ || !current_ic_->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+        bool usePreedit = shouldUsePreedit(current_ic_);
         
         engine_.OnKeyDown(cayEvent);
         
@@ -237,7 +243,7 @@ void CayimeEngine::keyEvent(const fcitx::InputMethodEntry& /*entry*/, fcitx::Key
         // Phím không được CayIME xử lý (ví dụ: F1-F12...).
         // Bắt buộc phải chốt (commit) và dọn sạch khung chữ đang gõ dở TRƯỚC KHI phím lọt xuống ứng dụng.
         if (!current_preedit_.empty()) {
-            bool usePreedit = forcePreedit_ || !keyEvent.inputContext()->capabilityFlags().test(fcitx::CapabilityFlag::SurroundingText);
+            bool usePreedit = shouldUsePreedit(keyEvent.inputContext());
             if (usePreedit) {
                 keyEvent.inputContext()->commitString(utf8_from_wstring(current_preedit_));
                 keyEvent.inputContext()->inputPanel().reset();
