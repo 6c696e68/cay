@@ -101,28 +101,57 @@ elseif(APPLE)
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/macos/Info.plist.in
     )
 
-    # Link frameworks
+    # Link frameworks (chỉ những framework thực sự dùng).
+    # - Cocoa: NSAlert/NSStatusBar/NSWorkspace/NSTimer/NSTask/NSRunningApplication...
+    # - CoreGraphics: CGEventTap/CGEventCreateKeyboardEvent (low-level event tap).
+    # - ApplicationServices: AXIsProcessTrusted (Accessibility check).
+    #
+    # Đã bỏ Carbon (không có call site) và ServiceManagement (chỉ import header,
+    # không gọi SMLoginItem/SMJobBless). Loại 2 framework này giảm số dyld
+    # imports → khởi động nhanh hơn và linker dead_strip hiệu quả hơn.
     find_library(COCOA_FRAMEWORK Cocoa)
     find_library(COREGRAPHICS_FRAMEWORK CoreGraphics)
-    find_library(CARBON_FRAMEWORK Carbon)
-    find_library(SERVICEMANAGEMENT_FRAMEWORK ServiceManagement)
-    
+    find_library(APPLICATIONSERVICES_FRAMEWORK ApplicationServices)
+
     target_link_libraries(cay PRIVATE
         ${COCOA_FRAMEWORK}
         ${COREGRAPHICS_FRAMEWORK}
-        ${CARBON_FRAMEWORK}
-        ${SERVICEMANAGEMENT_FRAMEWORK}
+        ${APPLICATIONSERVICES_FRAMEWORK}
     )
-    
-    # Compile options for minimal size on macOS
-    target_compile_options(cay PRIVATE -Os -fno-exceptions -fno-rtti)
+
+    # ---------------------------------------------------------------------
+    # Compile + link flags cho size tối thiểu (macOS Release).
+    # ---------------------------------------------------------------------
+    target_compile_options(cay PRIVATE
+        -Oz                              # Tối ưu size aggressive (nhỏ hơn -Os)
+        -fno-exceptions                  # Không C++ exceptions
+        -fno-rtti                        # Không RTTI
+        -fno-unwind-tables               # Không unwind tables (no exceptions = no need)
+        -fno-asynchronous-unwind-tables  # Không async unwind tables
+        -fvisibility=hidden              # Symbol mặc định hidden
+        -fvisibility-inlines-hidden      # Inline symbol hidden
+        -fdata-sections                  # Mỗi data trong section riêng
+        -ffunction-sections              # Mỗi function trong section riêng
+        -fmerge-all-constants            # Merge constants giống nhau
+        -fomit-frame-pointer             # Bỏ frame pointer (nhỏ hơn, ổn cho release)
+        -flto                            # Link-time optimization (cross-TU dead-strip)
+    )
+
+    target_link_options(cay PRIVATE
+        -Wl,-dead_strip                   # Strip unreferenced sections
+        -Wl,-dead_strip_dylibs            # Strip unreferenced dylibs
+        -Wl,-x                            # Strip non-global symbols
+        -Wl,-S                            # Strip debug symbols
+        -flto                             # LTO ở link stage
+    )
 
     # Ad-hoc codesign sau build: bắt buộc cho TCC (Accessibility) trên Apple
     # Silicon, và giúp entry Accessibility ổn định giữa các lần rebuild
     # cùng bundle id.
     add_custom_command(TARGET cay POST_BUILD
+        COMMAND ${CMAKE_STRIP} -x "$<TARGET_FILE:cay>"
         COMMAND codesign --force --deep --sign - "$<TARGET_BUNDLE_DIR:cay>"
-        COMMENT "Ad-hoc codesigning cay.app"
+        COMMENT "Strip + ad-hoc codesigning cay.app"
         VERBATIM
     )
 

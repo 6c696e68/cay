@@ -2,7 +2,6 @@
 #import "MacHookManager.h"
 #import "MacInputInjector.h"
 #import "CayEngine.h"
-#import <ServiceManagement/ServiceManagement.h>
 #import <ApplicationServices/ApplicationServices.h>
 
 namespace CayIME {
