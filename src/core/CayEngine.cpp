@@ -204,13 +204,6 @@ void TelexEngine::UpdateScreen(const wchar_t* newOutput, int newOutputLen) {
 }
 
 // ---------------------------------------------------------------------------
-// Commit – thay thế từ đang hiển thị bằng _text[0.._textLen).
-// ---------------------------------------------------------------------------
-void TelexEngine::Commit(int extraBs) {
-    UpdateScreen(_text, _textLen);
-}
-
-// ---------------------------------------------------------------------------
 // FallbackToRaw – revert về các ký tự ASCII thô user đã gõ.
 // Được gọi khi engine quyết định input là tiếng Anh.
 // ---------------------------------------------------------------------------
@@ -511,9 +504,40 @@ void TelexEngine::StripAllTones() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Bảng quy tắc cho double-keys (aa/ee/oo/dd):
+//   loKey       : phím trigger (đã lowercase)
+//   applyBase   : nguyên âm target khi apply (â/ê/ô/đ)
+//   plainBase   : nguyên âm thuần để compare (a/e/o/d) khi apply hoặc undo
+//   altUndoBase : nguyên âm thứ 2 cũng được undo (ă cho 'a', ơ cho 'o'); 0 nếu không
+// ---------------------------------------------------------------------------
+struct DoubleKeyRule {
+    wchar_t loKey;
+    wchar_t applyBase;
+    wchar_t plainBase;
+    wchar_t altUndoBase;
+};
+static const DoubleKeyRule s_doubleKeyRules[4] = {
+    { L'a', 0x00E2, L'a', 0x0103 }, // a → â (apply); undo â/ă → a
+    { L'e', 0x00EA, L'e', 0      }, // e → ê (apply); undo ê → e
+    { L'o', 0x00F4, L'o', 0x01A1 }, // o → ô (apply); undo ô/ơ → o
+    { L'd', 0x0111, L'd', 0      }  // d → đ (apply); undo đ → d
+};
+
 bool TelexEngine::ApplyDoubleKeys(wchar_t key) {
     wchar_t loKey = CayData::ToLowerViet(key);
-    if (loKey != L'a' && loKey != L'e' && loKey != L'o' && loKey != L'd') return false;
+
+    // Tìm rule khớp loKey (chỉ 4 entries, linear OK).
+    const DoubleKeyRule* rule = nullptr;
+    for (int i = 0; i < 4; i++) {
+        if (s_doubleKeyRules[i].loKey == loKey) { rule = &s_doubleKeyRules[i]; break; }
+    }
+    if (!rule) return false;
+
+    // Helper: append `key` raw vào cuối _text, bảo vệ overflow.
+    auto appendRaw = [&]() {
+        if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
+    };
 
     // Backward-scan: tìm nguyên âm gần nhất ở cuối _text có thể nhận double-key.
     // Quy tắc Telex Tell-Don't-Ask: chỉ ký tự đầu tiên match (undo hoặc apply)
@@ -523,43 +547,17 @@ bool TelexEngine::ApplyDoubleKeys(wchar_t key) {
 
         // 1. Undo logic — gõ lại double-key trên nguyên âm ĐÃ có dấu mũ/stroke
         //    → trả về nguyên âm thuần và append `key` raw vào cuối.
-        if (loKey == L'a' && (d.base == L'\u00e2' || d.base == L'\u0103')) {
-            _text[j] = CayData::ComposeChar(L'a', d.toneIndex, d.isUpper);
-            if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
-            return true;
-        }
-        if (loKey == L'e' && d.base == L'\u00ea') {
-            _text[j] = CayData::ComposeChar(L'e', d.toneIndex, d.isUpper);
-            if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
-            return true;
-        }
-        if (loKey == L'o' && (d.base == L'\u00f4' || d.base == L'\u01a1')) {
-            _text[j] = CayData::ComposeChar(L'o', d.toneIndex, d.isUpper);
-            if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
-            return true;
-        }
-        if (loKey == L'd' && d.base == L'\u0111') {
-            _text[j] = CayData::ComposeChar(L'd', d.toneIndex, d.isUpper);
-            if (_textLen < MAX_BUFFER - 1) { _text[_textLen++] = key; _text[_textLen] = L'\0'; }
+        if (d.base == rule->applyBase ||
+            (rule->altUndoBase != 0 && d.base == rule->altUndoBase)) {
+            _text[j] = CayData::ComposeChar(rule->plainBase, d.toneIndex, d.isUpper);
+            appendRaw();
             return true;
         }
 
         // 2. Apply logic — gõ double-key trên nguyên âm thuần → thêm dấu mũ/stroke,
         //    giữ nguyên dấu thanh và case hiện tại.
-        if (loKey == L'a' && d.base == L'a') {
-            _text[j] = CayData::ComposeChar(L'\u00E2', d.toneIndex, d.isUpper);
-            return true;
-        }
-        if (loKey == L'e' && d.base == L'e') {
-            _text[j] = CayData::ComposeChar(L'\u00EA', d.toneIndex, d.isUpper);
-            return true;
-        }
-        if (loKey == L'o' && d.base == L'o') {
-            _text[j] = CayData::ComposeChar(L'\u00F4', d.toneIndex, d.isUpper);
-            return true;
-        }
-        if (loKey == L'd' && d.base == L'd') {
-            _text[j] = CayData::ComposeChar(L'\u0111', d.toneIndex, d.isUpper);
+        if (d.base == rule->plainBase) {
+            _text[j] = CayData::ComposeChar(rule->applyBase, d.toneIndex, d.isUpper);
             return true;
         }
 

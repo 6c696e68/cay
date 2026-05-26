@@ -40,11 +40,6 @@ void InputHookManager::ClearKeyBit(DWORD vk) {
     _keyState[vk >> 6] &= ~(DWORD64(1) << (vk & 63));
 }
 
-bool InputHookManager::TestKeyBit(DWORD vk) const {
-    if (vk >= 256) return false;
-    return (_keyState[vk >> 6] & (DWORD64(1) << (vk & 63))) != 0;
-}
-
 // ---------------------------------------------------------------------------
 // Low-level keyboard hook procedure - Procedure hook keyboard low-level
 // ---------------------------------------------------------------------------

@@ -177,9 +177,6 @@ private:
     // Update màn hình hiệu quả bằng cách tính toán backspaces chính xác
     void UpdateScreen(const wchar_t* newOutput, int newOutputLen);
 
-    // Commit từ hiện tại: inject _text[] để thay thế những gì user thấy.
-    void Commit(int extraBs = 0);
-
     // Revert về input ASCII thô (fallback tiếng Anh).
     void FallbackToRaw();
 

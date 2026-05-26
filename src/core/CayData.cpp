@@ -104,63 +104,68 @@ static const wchar_t* const s_tails[] = {
 static const int s_tailsCount = sizeof(s_tails) / sizeof(s_tails[0]);
 
 // ---------------------------------------------------------------------------
-// PHẦN 3: Bảng ký tự có dấu
+// PHẦN 3: Bảng nguyên âm có dấu (single source of truth).
 //
-// Mỗi sub-array được index theo dấu (0=ngang … 5=nặng).
-// Nguyên âm cơ bản: a â ă e ê i o ô ơ u ư y
+// Mỗi hàng = 1 nhóm nguyên âm: cột 0 = base (thuần hoặc đã có mũ/móc),
+// cột 1..5 = 5 dạng có dấu thanh (huyền, sắc, hỏi, ngã, nặng).
+//
+// Tất cả lookup tone (GetToneMark, StripTone, LookupToneIndex) đều dùng
+// bảng này — thay 3 switch khổng lồ thành 1 bảng nhỏ + linear search 12 hàng.
+// 12 nhóm × 6 cột × 2 byte = 144 byte .rdata, gọn hơn ~600 byte switch.
 // ---------------------------------------------------------------------------
+static const wchar_t s_toneRows[12][6] = {
+    // base       huyền    sắc      hỏi      ngã      nặng
+    { L'a',       0x00E0,  0x00E1,  0x1EA3,  0x00E3,  0x1EA1 }, // a
+    { 0x00E2,     0x1EA7,  0x1EA5,  0x1EA9,  0x1EAB,  0x1EAD }, // â
+    { 0x0103,     0x1EB1,  0x1EAF,  0x1EB3,  0x1EB5,  0x1EB7 }, // ă
+    { L'e',       0x00E8,  0x00E9,  0x1EBB,  0x1EBD,  0x1EB9 }, // e
+    { 0x00EA,     0x1EC1,  0x1EBF,  0x1EC3,  0x1EC5,  0x1EC7 }, // ê
+    { L'i',       0x00EC,  0x00ED,  0x1EC9,  0x0129,  0x1ECB }, // i
+    { L'o',       0x00F2,  0x00F3,  0x1ECF,  0x00F5,  0x1ECD }, // o
+    { 0x00F4,     0x1ED3,  0x1ED1,  0x1ED5,  0x1ED7,  0x1ED9 }, // ô
+    { 0x01A1,     0x1EDD,  0x1EDB,  0x1EDF,  0x1EE1,  0x1EE3 }, // ơ
+    { L'u',       0x00F9,  0x00FA,  0x1EE7,  0x0169,  0x1EE5 }, // u
+    { 0x01B0,     0x1EEB,  0x1EE9,  0x1EED,  0x1EEF,  0x1EF1 }, // ư
+    { L'y',       0x1EF3,  0x00FD,  0x1EF7,  0x1EF9,  0x1EF5 }  // y
+};
 
-// Nhóm a
-static const wchar_t s_toneA[6] = { L'a', L'\u00E0', L'\u00E1', L'\u1EA3', L'\u00E3', L'\u1EA1' };
-// Nhóm â  â ầ ấ ẩ ẫ ậ
-static const wchar_t s_toneAc[6] = { L'\u00E2', L'\u1EA7', L'\u1EA5', L'\u1EA9', L'\u1EAB', L'\u1EAD' };
-// Nhóm ă  ă ằ ắ ẳ ẵ ặ
-static const wchar_t s_toneAb[6] = { L'\u0103', L'\u1EB1', L'\u1EAF', L'\u1EB3', L'\u1EB5', L'\u1EB7' };
-// Nhóm e
-static const wchar_t s_toneE[6] = { L'e', L'\u00E8', L'\u00E9', L'\u1EBB', L'\u1EBD', L'\u1EB9' };
-// Nhóm ê
-static const wchar_t s_toneEc[6] = { L'\u00EA', L'\u1EC1', L'\u1EBF', L'\u1EC3', L'\u1EC5', L'\u1EC7' };
-// Nhóm i
-static const wchar_t s_toneI[6] = { L'i', L'\u00EC', L'\u00ED', L'\u1EC9', L'\u0129', L'\u1ECB' };
-// Nhóm o
-static const wchar_t s_toneO[6] = { L'o', L'\u00F2', L'\u00F3', L'\u1ECF', L'\u00F5', L'\u1ECD' };
-// Nhóm ô
-static const wchar_t s_toneOc[6] = { L'\u00F4', L'\u1ED3', L'\u1ED1', L'\u1ED5', L'\u1ED7', L'\u1ED9' };
-// Nhóm ơ
-static const wchar_t s_toneOh[6] = { L'\u01A1', L'\u1EDD', L'\u1EDB', L'\u1EDF', L'\u1EE1', L'\u1EE3' };
-// Nhóm u
-static const wchar_t s_toneU[6] = { L'u', L'\u00F9', L'\u00FA', L'\u1EE7', L'\u0169', L'\u1EE5' };
-// Nhóm ư
-static const wchar_t s_toneUh[6] = { L'\u01B0', L'\u1EEB', L'\u1EE9', L'\u1EED', L'\u1EEF', L'\u1EF1' };
-// Nhóm y
-static const wchar_t s_toneY[6] = { L'y', L'\u1EF3', L'\u00FD', L'\u1EF7', L'\u1EF9', L'\u1EF5' };
-
-// ---------------------------------------------------------------------------
-// IsValidInitial - Kiểm tra phụ âm đầu hợp lệ
-// ---------------------------------------------------------------------------
-bool CayData::IsValidInitial(const wchar_t* s, int len) {
-    if (!s || len <= 0) return false;
-    for (int i = 0; i < s_initialsCount; i++) {
-        if ((int)CayStrLen(s_initials[i]) == len &&
-            CayStrCmp(s_initials[i], s) == 0) {
-            return true;
+// Tìm cell (row, col) trong s_toneRows chứa `ch` (đã chuẩn hoá lowercase).
+// Trả false nếu không thuộc bảng nguyên âm.
+static bool FindToneCell(wchar_t ch, int& row, int& col) {
+    for (int i = 0; i < 12; i++) {
+        for (int j = 0; j < 6; j++) {
+            if (s_toneRows[i][j] == ch) { row = i; col = j; return true; }
         }
     }
     return false;
 }
 
 // ---------------------------------------------------------------------------
+// Helper file-scope: kiểm tra `s` (length `len`) khớp đúng một entry nào
+// trong `table[0..tableCount)`. Dùng chung cho `IsValidInitial`/`IsValidNucleus`.
+// ---------------------------------------------------------------------------
+static bool ContainsExact(const wchar_t* const* table, int tableCount,
+                          const wchar_t* s, int len) {
+    if (!s || len <= 0) return false;
+    for (int i = 0; i < tableCount; i++) {
+        int elen = (int)CayStrLen(table[i]);
+        if (elen == len && CayStrCmp(table[i], s) == 0) return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// IsValidInitial - Kiểm tra phụ âm đầu hợp lệ
+// ---------------------------------------------------------------------------
+bool CayData::IsValidInitial(const wchar_t* s, int len) {
+    return ContainsExact(s_initials, s_initialsCount, s, len);
+}
+
+// ---------------------------------------------------------------------------
 // IsValidNucleus - Kiểm tra nguyên âm hợp lệ
 // ---------------------------------------------------------------------------
 bool CayData::IsValidNucleus(const wchar_t* s, int len) {
-    if (!s || len <= 0) return false;
-    for (int i = 0; i < s_nucleiCount; i++) {
-        int nlen = (int)CayStrLen(s_nuclei[i]);
-        if (nlen == len && CayStrCmp(s_nuclei[i], s) == 0) {
-            return true;
-        }
-    }
-    return false;
+    return ContainsExact(s_nuclei, s_nucleiCount, s, len);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,91 +185,15 @@ int CayData::GetToneIndex(wchar_t key) {
 }
 
 // ---------------------------------------------------------------------------
-// GetToneMark - Lấy ký tự có dấu
-// Trả về codepoint Unicode có dấu cho (nguyên âm cơ bản, chỉ số dấu).
-// base là nguyên âm thuần hoặc đã có dấu mũ.
+// GetToneMark - Lấy ký tự có dấu cho (nguyên âm cơ bản, chỉ số dấu).
+// Tra qua `s_toneRows`: tìm hàng chứa `base`, trả ô cột `toneIndex`.
+// Trả 0 nếu base không thuộc bảng hoặc toneIndex ngoài [0, 5].
 // ---------------------------------------------------------------------------
 wchar_t CayData::GetToneMark(wchar_t base, int toneIndex) {
     if (toneIndex < 0 || toneIndex > 5) return 0;
-
-    switch (base) {
-    // a thuần
-    case L'a': return s_toneA[toneIndex];
-
-    // â (dấu mũ trên a)
-    case L'\u00E2': return s_toneAc[toneIndex];
-
-    // ă (dấu ngắn trên a)
-    case L'\u0103': return s_toneAb[toneIndex];
-
-    // e thuần
-    case L'e': return s_toneE[toneIndex];
-
-    // ê (dấu mũ trên e)
-    case L'\u00EA': return s_toneEc[toneIndex];
-
-    // i thuần
-    case L'i': return s_toneI[toneIndex];
-
-    // o thuần
-    case L'o': return s_toneO[toneIndex];
-
-    // ô (dấu mũ trên o)
-    case L'\u00F4': return s_toneOc[toneIndex];
-
-    // ơ (dấu móc trên o)
-    case L'\u01A1': return s_toneOh[toneIndex];
-
-    // u thuần
-    case L'u': return s_toneU[toneIndex];
-
-    // ư (dấu móc trên u)
-    case L'\u01B0': return s_toneUh[toneIndex];
-
-    // y thuần
-    case L'y': return s_toneY[toneIndex];
-
-    // Đã có dấu – bỏ về cơ bản rồi áp dụng lại.
-    // Nhóm a đã có dấu
-    case L'\u00E0': case L'\u00E1': case L'\u1EA3': case L'\u00E3': case L'\u1EA1':
-        return s_toneA[toneIndex];
-    // Nhóm â đã có dấu  ầ ấ ẩ ẫ ậ
-    case L'\u1EA7': case L'\u1EA5': case L'\u1EA9': case L'\u1EAB': case L'\u1EAD':
-        return s_toneAc[toneIndex];
-    // Nhóm ă đã có dấu
-    case L'\u1EB1': case L'\u1EB3': case L'\u1EB5': case L'\u1EB7':
-        return s_toneAb[toneIndex];
-    // Nhóm e đã có dấu
-    case L'\u00E8': case L'\u00E9': case L'\u1EBB': case L'\u1EBD': case L'\u1EB9':
-        return s_toneE[toneIndex];
-    // Nhóm ê đã có dấu
-    case L'\u1EC1': case L'\u1EBF': case L'\u1EC3': case L'\u1EC5': case L'\u1EC7':
-        return s_toneEc[toneIndex];
-    // Nhóm i đã có dấu
-    case L'\u00EC': case L'\u00ED': case L'\u1EC9': case L'\u0129': case L'\u1ECB':
-        return s_toneI[toneIndex];
-    // Nhóm o đã có dấu
-    case L'\u00F2': case L'\u00F3': case L'\u1ECF': case L'\u00F5': case L'\u1ECD':
-        return s_toneO[toneIndex];
-    // Nhóm ô đã có dấu
-    case L'\u1ED3': case L'\u1ED1': case L'\u1ED5': case L'\u1ED7': case L'\u1ED9':
-        return s_toneOc[toneIndex];
-    // Nhóm ơ đã có dấu
-    case L'\u1EDD': case L'\u1EDB': case L'\u1EDF': case L'\u1EE1': case L'\u1EE3':
-        return s_toneOh[toneIndex];
-    // Nhóm u đã có dấu
-    case L'\u00F9': case L'\u00FA': case L'\u1EE7': case L'\u0169': case L'\u1EE5':
-        return s_toneU[toneIndex];
-    // Nhóm ư đã có dấu
-    case L'\u1EEB': case L'\u1EE9': case L'\u1EED': case L'\u1EEF': case L'\u1EF1':
-        return s_toneUh[toneIndex];
-    // Nhóm y đã có dấu
-    case L'\u1EF3': case L'\u00FD': case L'\u1EF7': case L'\u1EF9': case L'\u1EF5':
-        return s_toneY[toneIndex];
-
-    default:
-        return 0;
-    }
+    int row, col;
+    if (!FindToneCell(base, row, col)) return 0;
+    return s_toneRows[row][toneIndex];
 }
 
 // ---------------------------------------------------------------------------
@@ -286,12 +215,11 @@ wchar_t CayData::GetHookRule(wchar_t c) {
 
 // ---------------------------------------------------------------------------
 // HasVietnameseMark (ký tự đơn) - Kiểm tra có dấu tiếng Việt
+// `StripAccent` đã chain `StripTone` bên trong nên chỉ cần 1 lần gọi.
 // ---------------------------------------------------------------------------
 bool CayData::HasVietnameseMark(wchar_t ch) {
     if (ch < 0x00C0) return false;
-    // Nếu bỏ dấu thanh và dấu mũ làm thay đổi ký tự, có nghĩa là có dấu.
-    wchar_t base = StripAccent(StripTone(ch));
-    return base != ch;
+    return StripAccent(ch) != ch;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,76 +234,51 @@ bool CayData::HasVietnameseMark(const wchar_t* buf, int len) {
 
 // ---------------------------------------------------------------------------
 // StripTone – Bỏ dấu thanh từ nguyên âm, giữ dấu mũ/dấu ngắn.
+//
+// Cài đặt: tra `s_toneRows` cho cả `ch` và `ToUpperViet(ch)`. Nếu match
+// một ô (row, col) với `col >= 1` thì kết quả là cột 0 (base). Cột 0 hoặc
+// không match → trả `ch` không đổi.
 // ---------------------------------------------------------------------------
 wchar_t CayData::StripTone(wchar_t ch) {
-    switch (ch) {
-        case L'\u00E0': case L'\u00E1': case L'\u1EA3': case L'\u00E3': case L'\u1EA1': return L'a';
-        case L'\u00C0': case L'\u00C1': case L'\u1EA2': case L'\u00C3': case L'\u1EA0': return L'A';
-        case L'\u1EA7': case L'\u1EA5': case L'\u1EA9': case L'\u1EAB': case L'\u1EAD': return L'\u00E2';
-        case L'\u1EA6': case L'\u1EA4': case L'\u1EA8': case L'\u1EAA': case L'\u1EAC': return L'\u00C2';
-        case L'\u1EB1': case L'\u1EAF': case L'\u1EB3': case L'\u1EB5': case L'\u1EB7': return L'\u0103';
-        case L'\u1EB0': case L'\u1EAE': case L'\u1EB2': case L'\u1EB4': case L'\u1EB6': return L'\u0102';
-        case L'\u00E8': case L'\u00E9': case L'\u1EBB': case L'\u1EBD': case L'\u1EB9': return L'e';
-        case L'\u00C8': case L'\u00C9': case L'\u1EBA': case L'\u1EBC': case L'\u1EB8': return L'E';
-        case L'\u1EC1': case L'\u1EBF': case L'\u1EC3': case L'\u1EC5': case L'\u1EC7': return L'\u00EA';
-        case L'\u1EC0': case L'\u1EBE': case L'\u1EC2': case L'\u1EC4': case L'\u1EC6': return L'\u00CA';
-        case L'\u00EC': case L'\u00ED': case L'\u1EC9': case L'\u0129': case L'\u1ECB': return L'i';
-        case L'\u00CC': case L'\u00CD': case L'\u1EC8': case L'\u0128': case L'\u1ECA': return L'I';
-        case L'\u00F2': case L'\u00F3': case L'\u1ECF': case L'\u00F5': case L'\u1ECD': return L'o';
-        case L'\u00D2': case L'\u00D3': case L'\u1ECE': case L'\u00D5': case L'\u1ECC': return L'O';
-        case L'\u1ED3': case L'\u1ED1': case L'\u1ED5': case L'\u1ED7': case L'\u1ED9': return L'\u00F4';
-        case L'\u1ED2': case L'\u1ED0': case L'\u1ED4': case L'\u1ED6': case L'\u1ED8': return L'\u00D4';
-        case L'\u1EDD': case L'\u1EDB': case L'\u1EDF': case L'\u1EE1': case L'\u1EE3': return L'\u01A1';
-        case L'\u1EDC': case L'\u1EDA': case L'\u1EDE': case L'\u1EE0': case L'\u1EE2': return L'\u01A0';
-        case L'\u00F9': case L'\u00FA': case L'\u1EE7': case L'\u0169': case L'\u1EE5': return L'u';
-        case L'\u00D9': case L'\u00DA': case L'\u1EE6': case L'\u0168': case L'\u1EE4': return L'U';
-        case L'\u1EEB': case L'\u1EE9': case L'\u1EED': case L'\u1EEF': case L'\u1EF1': return L'\u01B0';
-        case L'\u1EEA': case L'\u1EE8': case L'\u1EEC': case L'\u1EEE': case L'\u1EF0': return L'\u01AF';
-        case L'\u1EF3': case L'\u00FD': case L'\u1EF7': case L'\u1EF9': case L'\u1EF5': return L'y';
-        case L'\u1EF2': case L'\u00DD': case L'\u1EF6': case L'\u1EF8': case L'\u1EF4': return L'Y';
-        default: return ch;
-    }
+    int row, col;
+    bool isUpper = (ch != ToLowerViet(ch));
+    wchar_t lo = isUpper ? ToLowerViet(ch) : ch;
+    if (!FindToneCell(lo, row, col)) return ch;
+    if (col == 0) return ch; // không có dấu thanh
+    wchar_t base = s_toneRows[row][0];
+    return isUpper ? ToUpperViet(base) : base;
 }
 
 // ---------------------------------------------------------------------------
 // StripAccent – Bỏ dấu mũ hoặc dấu ngắn, trả về nguyên âm ASCII thuần.
+//
+// Cài đặt: gọi `StripTone` trước để loại bỏ dấu thanh (cover các ký tự
+// như `ầ`, `ằ`, `ề` ... đã có cả mũ + thanh), sau đó switch nhỏ chỉ
+// chuyển 6 base có mũ/móc + đ về dạng ASCII tương ứng.
 // ---------------------------------------------------------------------------
 wchar_t CayData::StripAccent(wchar_t ch) {
-    switch (ch) {
+    wchar_t c = StripTone(ch);
+    switch (c) {
     case L'\u00E2': case L'\u0103': return L'a'; // â ă -> a
     case L'\u00C2': case L'\u0102': return L'A'; // Â Ă -> A
     case L'\u00EA':                 return L'e'; // ê   -> e
     case L'\u00CA':                 return L'E'; // Ê   -> E
-    case L'\u00F4':                 return L'o'; // ô   -> o
-    case L'\u00D4':                 return L'O'; // Ô   -> O
-    case L'\u01A1':                 return L'o'; // ơ   -> o
-    case L'\u01A0':                 return L'O'; // Ơ   -> O
+    case L'\u00F4': case L'\u01A1': return L'o'; // ô ơ -> o
+    case L'\u00D4': case L'\u01A0': return L'O'; // Ô Ơ -> O
     case L'\u01B0':                 return L'u'; // ư   -> u
     case L'\u01AF':                 return L'U'; // Ư   -> U
     case L'\u0111':                 return L'd'; // đ   -> d
     case L'\u0110':                 return L'D'; // Đ   -> D
-    // Cũng bỏ từ nguyên âm có dấu mũ đã có dấu (bỏ cả 2 dấu trong 1 bước).
-    case L'\u1EA7': case L'\u1EA5': case L'\u1EAB': case L'\u1EAD': case L'\u1EAF': return L'a';
-    case L'\u1EA6': case L'\u1EA4': case L'\u1EAA': case L'\u1EAC': case L'\u1EAE': return L'A';
-    case L'\u1EB1': case L'\u1EB3': case L'\u1EB5': case L'\u1EB7': return L'a';
-    case L'\u1EB0': case L'\u1EB2': case L'\u1EB4': case L'\u1EB6': return L'A';
-    case L'\u1EC1': case L'\u1EBF': case L'\u1EC3': case L'\u1EC5': case L'\u1EC7': return L'e';
-    case L'\u1EC0': case L'\u1EBE': case L'\u1EC2': case L'\u1EC4': case L'\u1EC6': return L'E';
-    case L'\u1ED3': case L'\u1ED1': case L'\u1ED5': case L'\u1ED7': case L'\u1ED9': return L'o';
-    case L'\u1ED2': case L'\u1ED0': case L'\u1ED4': case L'\u1ED6': case L'\u1ED8': return L'O';
-    case L'\u1EDD': case L'\u1EDB': case L'\u1EDF': case L'\u1EE1': case L'\u1EE3': return L'o';
-    case L'\u1EDC': case L'\u1EDA': case L'\u1EDE': case L'\u1EE0': case L'\u1EE2': return L'O';
-    case L'\u1EEB': case L'\u1EE9': case L'\u1EED': case L'\u1EEF': case L'\u1EF1': return L'u';
-    case L'\u1EEA': case L'\u1EE8': case L'\u1EEC': case L'\u1EEE': case L'\u1EF0': return L'U';
-    default: return ch;
+    default: return c;
     }
 }
 
 // ---------------------------------------------------------------------------
 // IsVowel – true cho bất kỳ nguyên âm tiếng Việt (thuần hoặc có dấu).
+// `StripAccent` đã chain `StripTone` bên trong nên chỉ cần 1 lần gọi.
 // ---------------------------------------------------------------------------
 bool CayData::IsVowel(wchar_t ch) {
-    wchar_t base = StripAccent(StripTone(ch));
+    wchar_t base = StripAccent(ch);
     switch (base) {
     case L'a': case L'A':
     case L'e': case L'E':
@@ -421,56 +324,15 @@ wchar_t CayData::ToUpperViet(wchar_t c) {
 // ---------------------------------------------------------------------------
 // LookupToneIndex – tra ngược chỉ số dấu thanh của ký tự nguyên âm thường.
 //
-// Nhận `c_lower` đã được `ToLowerViet` chuẩn hoá. Trả về:
-//   1 = huyền, 2 = sắc, 3 = hỏi, 4 = ngã, 5 = nặng, 0 = không có dấu thanh
-//   (bao gồm cả nguyên âm thuần và nguyên âm có dấu mũ/móc không kèm thanh).
+// Tra `s_toneRows`: nếu match ô (row, col) thì trả `col` (0 = không có dấu).
+// Trả 0 nếu `c_lower` không thuộc bảng (caller đã chuẩn hoá lowercase trước).
 //
-// Switch trải đủ 12 nguyên âm × 5 tone = 60 case (compiler MSVC/clang sẽ
-// tối ưu thành jump table). Không vòng for, không CRT — O(1) thuần tuý.
-//
-// Đây là static helper file-scope (không phải member của CayData) — nó là
-// chi tiết implementation của `DecomposeChar` và không cần expose ra ngoài.
+// Static helper file-scope — chi tiết implementation của `DecomposeChar`.
 // ---------------------------------------------------------------------------
 static int LookupToneIndex(wchar_t c_lower) {
-    switch (c_lower) {
-        // Tone 1 — huyền (à, ầ, ằ, è, ề, ì, ò, ồ, ờ, ù, ừ, ỳ)
-        case L'\u00E0': case L'\u1EA7': case L'\u1EB1':
-        case L'\u00E8': case L'\u1EC1': case L'\u00EC':
-        case L'\u00F2': case L'\u1ED3': case L'\u1EDD':
-        case L'\u00F9': case L'\u1EEB': case L'\u1EF3':
-            return 1;
-
-        // Tone 2 — sắc (á, ấ, ắ, é, ế, í, ó, ố, ớ, ú, ứ, ý)
-        case L'\u00E1': case L'\u1EA5': case L'\u1EAF':
-        case L'\u00E9': case L'\u1EBF': case L'\u00ED':
-        case L'\u00F3': case L'\u1ED1': case L'\u1EDB':
-        case L'\u00FA': case L'\u1EE9': case L'\u00FD':
-            return 2;
-
-        // Tone 3 — hỏi (ả, ẩ, ẳ, ẻ, ể, ỉ, ỏ, ổ, ở, ủ, ử, ỷ)
-        case L'\u1EA3': case L'\u1EA9': case L'\u1EB3':
-        case L'\u1EBB': case L'\u1EC3': case L'\u1EC9':
-        case L'\u1ECF': case L'\u1ED5': case L'\u1EDF':
-        case L'\u1EE7': case L'\u1EED': case L'\u1EF7':
-            return 3;
-
-        // Tone 4 — ngã (ã, ẫ, ẵ, ẽ, ễ, ĩ, õ, ỗ, ỡ, ũ, ữ, ỹ)
-        case L'\u00E3': case L'\u1EAB': case L'\u1EB5':
-        case L'\u1EBD': case L'\u1EC5': case L'\u0129':
-        case L'\u00F5': case L'\u1ED7': case L'\u1EE1':
-        case L'\u0169': case L'\u1EEF': case L'\u1EF9':
-            return 4;
-
-        // Tone 5 — nặng (ạ, ậ, ặ, ẹ, ệ, ị, ọ, ộ, ợ, ụ, ự, ỵ)
-        case L'\u1EA1': case L'\u1EAD': case L'\u1EB7':
-        case L'\u1EB9': case L'\u1EC7': case L'\u1ECB':
-        case L'\u1ECD': case L'\u1ED9': case L'\u1EE3':
-        case L'\u1EE5': case L'\u1EF1': case L'\u1EF5':
-            return 5;
-
-        default:
-            return 0;
-    }
+    int row, col;
+    if (!FindToneCell(c_lower, row, col)) return 0;
+    return col;
 }
 
 // ---------------------------------------------------------------------------

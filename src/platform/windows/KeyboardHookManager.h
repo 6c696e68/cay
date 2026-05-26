@@ -43,7 +43,6 @@ private:
 
     void SetKeyBit(DWORD vk);
     void ClearKeyBit(DWORD vk);
-    bool TestKeyBit(DWORD vk) const;
 
     static LRESULT CALLBACK KbProc  (int nCode, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam);
