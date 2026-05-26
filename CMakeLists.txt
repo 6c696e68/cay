@@ -117,6 +117,15 @@ elseif(APPLE)
     # Compile options for minimal size on macOS
     target_compile_options(cay PRIVATE -Os -fno-exceptions -fno-rtti)
 
+    # Ad-hoc codesign sau build: bắt buộc cho TCC (Accessibility) trên Apple
+    # Silicon, và giúp entry Accessibility ổn định giữa các lần rebuild
+    # cùng bundle id.
+    add_custom_command(TARGET cay POST_BUILD
+        COMMAND codesign --force --deep --sign - "$<TARGET_BUNDLE_DIR:cay>"
+        COMMENT "Ad-hoc codesigning cay.app"
+        VERBATIM
+    )
+
 elseif(CMAKE_SYSTEM_NAME MATCHES "Linux")
     # Old uinput code was removed by the user. Fcitx5 is now the primary Linux target.
 endif()
@@ -127,4 +136,41 @@ endif()
 option(BUILD_FCITX5 "Build Fcitx5 Plugin" OFF)
 if(BUILD_FCITX5)
     add_subdirectory(src/platform/fcitx5)
+endif()
+
+# ---------------------------------------------------------------------------
+# Property-Based Test target (Optional)
+#
+# Test binary `cay_test` được build độc lập với release binary `cay`.
+# Test build CỐ Ý KHÔNG kế thừa các cờ no-CRT/no-exception/no-RTTI của
+# Windows release (`/EHs-c-`, `/GR-`, `/NODEFAULTLIB:msvcrt.lib`) — test code
+# được phép dùng STL (<vector>, <string>, <random>, doctest, ...) bình thường
+# vì nó chạy trong môi trường developer/CI, không phải binary phân phối.
+#
+# Release binary `cay` giữ nguyên ràng buộc no-CRT trên Windows.
+# ---------------------------------------------------------------------------
+option(BUILD_TESTING "Build property-based tests" OFF)
+if(BUILD_TESTING)
+    enable_testing()
+
+    # Gom test sources từ test/*.cpp. Tại Phase 0 các file này được tạo dần
+    # bởi task 1.2 (property.h harness), 1.5 (golden_trace.cpp), 1.7 (test_*).
+    # Vì vậy ta phải cho phép cấu hình thành công NGAY CẢ KHI chưa có file
+    # test nào — chỉ tạo executable khi danh sách non-empty.
+    file(GLOB CAY_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp")
+
+    if(CAY_TEST_SOURCES)
+        add_executable(cay_test ${CORE_SOURCES} ${CAY_TEST_SOURCES})
+        target_compile_definitions(cay_test PRIVATE CAY_TEST_BUILD)
+        target_include_directories(cay_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+            ${CMAKE_CURRENT_SOURCE_DIR}/test
+        )
+        add_test(NAME cay_test COMMAND cay_test)
+    else()
+        message(STATUS
+            "BUILD_TESTING=ON nhưng chưa có file test/*.cpp nào — "
+            "bỏ qua target cay_test (sẽ được tạo khi task 1.2/1.5/1.7 thêm test sources)."
+        )
+    endif()
 endif()

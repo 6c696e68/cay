@@ -1,0 +1,21 @@
+# Cay binary size baseline — recorded retroactively for task 8.6.
+# Format: <platform>|<relative_path>|<bytes>
+# Used by tasks.md task 8.5/8.6 (Requirement 12: tăng tối đa 10%).
+#
+# Source commit: 0b3112f (HEAD ngay trước Phase 0 — "Fix terminal bug by
+# blacklisting buggy terminal emulators from SurroundingText", tag v1.0.1).
+# Build pipeline (matching current HEAD CMakeLists.txt):
+#   cmake -B <dir> -S <repo> -DCMAKE_BUILD_TYPE=Release
+#   cmake --build <dir> --target cay
+#   codesign --force --sign - --timestamp=none <dir>/cay.app
+# Host: macOS arm64+x86_64 universal (CMAKE_OSX_ARCHITECTURES="arm64;x86_64"),
+#       AppleClang 21.0.0.21000101.
+#
+# Phải chạy codesign sau build vì current HEAD CMakeLists.txt thêm
+# POST_BUILD ad-hoc codesign (commit cc3c65c trở đi); LINKEDIT segment chứa
+# code signature đóng góp ~17KB cho universal binary, nên baseline phải
+# codesign cùng cách để so sánh apple-to-apple.
+#
+# Windows / Fcitx5 baseline entries: chưa đo retroactively vì host macOS
+# không có toolchain. Sẽ ghi bổ sung khi có CI Windows / Linux runners.
+macOS|build/cay.app/Contents/MacOS/cay|228560
