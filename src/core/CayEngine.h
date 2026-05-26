@@ -174,6 +174,14 @@ private:
     // là ứng viên tốt để nhận dấu thanh (quy tắc đặt dấu tiếng Việt).
     int FindTonePosition() const;
 
+    // Re-position dấu thanh nếu vị trí hiện tại không khớp với
+    // `FindTonePosition()`. Được gọi sau khi mutate nguyên âm (double/hook
+    // keys) hoặc sau khi append một phụ âm cuối — vì cấu trúc âm tiết
+    // có thể đã thay đổi và quy tắc tiếng Việt yêu cầu dấu di chuyển.
+    // Vd. "xúa" + "t" → phải dời dấu sang "a" thành "xuát".
+    // Vd. "xúa" + "a"(double) → "xuâ" mở → dấu phải dời sang "â" thành "xuấ".
+    void RepositionTone();
+
     // Update màn hình hiệu quả bằng cách tính toán backspaces chính xác
     void UpdateScreen(const wchar_t* newOutput, int newOutputLen);
 

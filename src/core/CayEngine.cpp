@@ -140,12 +140,19 @@ void TelexEngine::ReplayKey(wchar_t ch) {
 
     bool bypass = ShouldBypassWord();
     bool appliedModifier = false;
+    bool mutatedVowel    = false; // true nếu modifier biến đổi nguyên âm
 
     if (!bypass && (lo == L'a' || lo == L'e' || lo == L'o' || lo == L'd')) {
-        if (_textLen > 0 && ApplyDoubleKeys(ch)) appliedModifier = true;
+        if (_textLen > 0 && ApplyDoubleKeys(ch)) {
+            appliedModifier = true;
+            mutatedVowel    = true;
+        }
     }
     if (!bypass && !appliedModifier && lo == L'w' && _textLen > 0) {
-        if (ApplyHookKeys(ch)) appliedModifier = true;
+        if (ApplyHookKeys(ch)) {
+            appliedModifier = true;
+            mutatedVowel    = true;
+        }
     }
     if (!bypass && !appliedModifier) {
         int ti = CayData::GetToneIndex(lo);
@@ -158,6 +165,17 @@ void TelexEngine::ReplayKey(wchar_t ch) {
             _text[_textLen++] = ch;
             _text[_textLen]   = L'\0';
         }
+    }
+
+    // Sau khi mutate cấu trúc âm tiết (double/hook key biến đổi nguyên âm,
+    // hoặc append một phụ âm cuối), re-position dấu thanh nếu vị trí cũ
+    // không còn đúng theo quy tắc tiếng Việt. Idempotent — no-op nếu không
+    // có dấu hoặc đã đúng vị trí.
+    bool appendedConsonant = !appliedModifier
+                          && IsAlpha(ch)
+                          && !CayData::IsVowel(ch);
+    if (mutatedVowel || appendedConsonant) {
+        RepositionTone();
     }
 }
 
@@ -458,6 +476,21 @@ int TelexEngine::FindTonePosition() const {
         wchar_t v1 = baseVowel(_text[first]);
         wchar_t v2 = baseVowel(_text[last]);
 
+        // Helper: nguyên âm có dấu mũ/móc (â, ê, ô, ơ, ă, ư) — đã strip tone
+        // qua DecomposeChar.base, không qua baseVowel.
+        auto isHooked = [](wchar_t c) -> bool {
+            return c == L'\u00e2' || c == L'\u00ea' || c == L'\u00f4'
+                || c == L'\u01a1' || c == L'\u0103' || c == L'\u01b0';
+        };
+        wchar_t b1 = CayData::DecomposeChar(_text[first]).base;
+        wchar_t b2 = CayData::DecomposeChar(_text[last]).base;
+
+        // Ưu tiên cao nhất: nguyên âm có dấu mũ/móc luôn nhận dấu thanh
+        // (vd. "uâ" → â, "uô" → ô, "uơ" → ơ, "iâ" → â, "uă" → ă, ...).
+        // Quy tắc tiếng Việt: dấu thanh đặt trên nguyên âm mũ/móc nếu có.
+        if (isHooked(b2) && !isHooked(b1)) return last;
+        if (isHooked(b1) && !isHooked(b2)) return first;
+
         // oa, oe
         if (v1 == L'o' && (v2 == L'a' || v2 == L'e')) return last;
         // uê, uy, uơ
@@ -481,6 +514,19 @@ int TelexEngine::FindTonePosition() const {
         wchar_t v2 = baseVowel(_text[first + 1]);
         wchar_t v3 = baseVowel(_text[last]);
 
+        // Ưu tiên: nguyên âm có dấu mũ/móc trong cụm 3 nguyên âm mở.
+        // Vd. "uyê" (incomplete "nguyễ") → ê; "uô" trong "giuô" → ô.
+        auto isHooked = [](wchar_t c) -> bool {
+            return c == L'\u00e2' || c == L'\u00ea' || c == L'\u00f4'
+                || c == L'\u01a1' || c == L'\u0103' || c == L'\u01b0';
+        };
+        wchar_t b1 = CayData::DecomposeChar(_text[first]).base;
+        wchar_t b2 = CayData::DecomposeChar(_text[first + 1]).base;
+        wchar_t b3 = CayData::DecomposeChar(_text[last]).base;
+        if (isHooked(b3) && !isHooked(b2) && !isHooked(b1)) return last;
+        if (isHooked(b2) && !isHooked(b1) && !isHooked(b3)) return first + 1;
+        if (isHooked(b1) && !isHooked(b2) && !isHooked(b3)) return first;
+
         // uyê (incomplete "nguyễ", "chuyế") -> tone on ê
         if (v1 == L'u' && v2 == L'y' && v3 == L'e') return last;
         // giuô, giươ (incomplete "giuộ", "giượ") -> tone on ô/ơ
@@ -501,6 +547,57 @@ void TelexEngine::StripAllTones() {
     for (int i = 0; i < _textLen; i++) {
         wchar_t stripped = CayData::StripTone(_text[i]);
         _text[i] = stripped;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RepositionTone – di chuyển dấu thanh sang đúng vị trí theo cấu trúc
+// âm tiết hiện tại.
+//
+// Quét _text[]: nếu thấy nguyên âm có dấu thanh ở vị trí khác với
+// `FindTonePosition()` thì chuyển dấu sang vị trí mới. Idempotent:
+// nếu đã đúng vị trí thì no-op.
+//
+// Mục đích: xử lý fail-to-reposition bug khi:
+//   1. User gõ "xua" + "s" → "xúa" (sắc trên u — đúng cho cụm mở "ua").
+//      Sau đó gõ "t" → "xúat" → cấu trúc đổi (có phụ âm cuối) →
+//      dấu phải dời sang "a" thành "xuát".
+//   2. User gõ "xua" + "s" + "a"(double-key) → "xuấa"? Không, ApplyDoubleKeys
+//      biến "a" thành "â": "xúâ". Lúc này cụm "uâ" mở → ưu tiên hooked vowel
+//      → dấu dời từ "u" sang "â" thành "xuấ".
+//   3. Gõ tiếp "t" → "xuất" (cấu trúc khép, dấu vẫn ở "â" — đúng).
+// ---------------------------------------------------------------------------
+void TelexEngine::RepositionTone() {
+    if (_textLen == 0) return;
+
+    // Tìm vị trí dấu hiện tại (nếu có).
+    int currentPos = -1;
+    int currentTone = 0;
+    for (int i = 0; i < _textLen; i++) {
+        auto d = CayData::DecomposeChar(_text[i]);
+        if (d.toneIndex > 0) {
+            currentPos = i;
+            currentTone = d.toneIndex;
+            break;
+        }
+    }
+    if (currentPos < 0) return; // không có dấu → không cần làm gì
+
+    int targetPos = FindTonePosition();
+    if (targetPos < 0 || targetPos == currentPos) return; // đã đúng
+
+    // Strip dấu cũ.
+    auto dOld = CayData::DecomposeChar(_text[currentPos]);
+    _text[currentPos] = CayData::ComposeChar(dOld.base, 0, dOld.isUpper);
+
+    // Đặt dấu vào vị trí mới.
+    auto dNew = CayData::DecomposeChar(_text[targetPos]);
+    wchar_t toned = CayData::ComposeChar(dNew.base, currentTone, dNew.isUpper);
+    if (toned != L'\0') {
+        _text[targetPos] = toned;
+    } else {
+        // Fallback: nếu không có mapping, đặt lại dấu cũ để giữ thông tin.
+        _text[currentPos] = CayData::ComposeChar(dOld.base, currentTone, dOld.isUpper);
     }
 }
 
